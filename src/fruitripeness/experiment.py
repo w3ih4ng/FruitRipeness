@@ -1,4 +1,4 @@
-"""Run HSV Method 1, compare a compatible baseline, and export mask previews."""
+"""Run an implemented processing method, compare baseline, and export previews."""
 from __future__ import annotations
 
 import argparse
@@ -13,6 +13,8 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 from .audit import write_csv
 from .baseline import assign_splits, collect_records, resolve_dataset_root, train_baseline
 from .processing import process_image, processing_spec
+
+METHOD_LABELS = {"hsv": "Method 1 - HSV", "otsu": "Method 2 - Otsu"}
 
 
 def read_run(path: Path) -> tuple[dict, dict]:
@@ -33,8 +35,9 @@ def compare_runs(baseline_run: Path, method_run: Path) -> dict:
     current, current_metrics = read_run(method_run)
     if baseline.get("method") != "baseline":
         raise ValueError("The reference must be a baseline run")
-    if current.get("method") != "hsv":
-        raise ValueError("Method run must be HSV")
+    method_id = current.get("method")
+    if method_id not in METHOD_LABELS:
+        raise ValueError("Unsupported processing method in run")
     for key in ["split_id", "feature_id", "seed", "counts", "model_type"]:
         if baseline.get(key) != current.get(key):
             raise ValueError(f"Cannot compare runs: {key} differs. Use the same dataset and experiment settings.")
@@ -47,7 +50,7 @@ def compare_runs(baseline_run: Path, method_run: Path) -> dict:
             raise ValueError(f"Cannot compare runs: {key} version differs; rerun baseline with the installed environment")
     fields = ["accuracy", "balanced_accuracy", "macro_precision", "macro_recall", "macro_f1"]
     rows = []
-    for method, result in [("baseline", baseline_metrics["validation"]), ("hsv", current_metrics["validation"])]:
+    for method, result in [("baseline", baseline_metrics["validation"]), (method_id, current_metrics["validation"])]:
         for scope, values in [("overall", result), *sorted(result["per_fruit"].items())]:
             rows.append({"method": method, "scope": scope, "n_images": values["n_images"],
                          **{key: values[key] for key in fields}})
@@ -57,8 +60,8 @@ def compare_runs(baseline_run: Path, method_run: Path) -> dict:
         "split": "validation", "split_id": current["split_id"],
         "baseline_run": Path(baseline_run).name, "method_run": Path(method_run).name,
         "baseline": {key: old[key] for key in fields},
-        "hsv": {key: new[key] for key in fields},
-        "hsv_minus_baseline": {key: new[key]-old[key] for key in fields},
+        method_id: {key: new[key] for key in fields},
+        f"{method_id}_minus_baseline": {key: new[key]-old[key] for key in fields},
         "delta_units": "fraction differences; multiply accuracy differences by 100 for percentage points",
         "timing_note": "Timing comparison omitted; batch size, worker count and hardware influence timings.",
     }
@@ -66,15 +69,15 @@ def compare_runs(baseline_run: Path, method_run: Path) -> dict:
     return comparison
 
 
-def render_preview(image: Image.Image, title: str, footer: str) -> Image.Image:
-    result = process_image(image, "hsv")
+def render_preview(image: Image.Image, title: str, footer: str, *, method: str = "hsv") -> Image.Image:
+    result = process_image(image, method)
     canvas = Image.new("RGB", (1000, 460), "white")
     draw = ImageDraw.Draw(canvas)
     font = ImageFont.load_default(size=18)
     small = ImageFont.load_default(size=15)
     draw.text((20, 12), title, fill="black", font=font)
     panels = [("Original", result.original),
-              ("HSV foreground mask", Image.fromarray(result.mask.astype("uint8")*255)),
+              (f"{method.upper()} foreground mask", Image.fromarray(result.mask.astype("uint8")*255)),
               ("Processed input", result.processed)]
     for i, (caption, panel) in enumerate(panels):
         x = 20+i*330
@@ -83,6 +86,8 @@ def render_preview(image: Image.Image, title: str, footer: str) -> Image.Image:
         canvas.paste(resized, (x+(300-resized.width)//2, 80+(300-resized.height)//2))
         draw.rectangle((x-1, 79, x+300, 380), outline="#bbbbbb")
     status = f"Foreground: {result.details['foreground_fraction']:.1%} | Mask status: {result.details['mask_status']}"
+    if method == "otsu":
+        status += f" | Threshold: {result.details['otsu_threshold']} | Keep: {result.details['foreground_polarity']}"
     draw.text((20, 393), status, fill="black", font=small)
     for i, line in enumerate(textwrap.wrap(footer, width=105)[:2]):
         draw.text((20, 418+i*18), line, fill="black", font=small)
@@ -96,10 +101,11 @@ def export_previews(data_root: Path, method_run: Path) -> int:
     True labels only select/report examples; process_image receives only pixels.
     """
     metadata, _ = read_run(method_run)
-    if metadata.get("method") != "hsv":
-        raise ValueError("HSV previews require an HSV run")
-    if metadata.get("processing_spec") != processing_spec("hsv"):
-        raise ValueError("Preview implementation does not match the saved HSV processing settings")
+    method = metadata.get("method")
+    if method not in METHOD_LABELS:
+        raise ValueError("Unsupported processing method for previews")
+    if metadata.get("processing_spec") != processing_spec(method):
+        raise ValueError("Preview implementation does not match the saved processing settings")
     with (method_run/"predictions_validation.csv").open(encoding="utf-8", newline="") as f:
         predictions = list(csv.DictReader(f))
     with (method_run/"split_manifest.csv").open(encoding="utf-8", newline="") as f:
@@ -128,9 +134,9 @@ def export_previews(data_root: Path, method_run: Path) -> int:
         if hashlib.sha256(source.read_bytes()).hexdigest() != record["sha256"]:
             raise ValueError(f"Preview source changed since training: {row['path']}")
         name = f"{i:02d}_{row['fruit']}_{row['true_stage']}.png"
-        title = f"Method 1 - HSV | Truth: {row['true_stage']} | Predicted: {row['predicted_stage']}"
+        title = f"{METHOD_LABELS[method]} | Truth: {row['true_stage']} | Predicted: {row['predicted_stage']}"
         with Image.open(source) as image:
-            preview = render_preview(image, title, row["path"])
+            preview = render_preview(image, title, row["path"], method=method)
         preview.save(output/name)
         index.append({"file":name,"source":row["path"],"selection":reason,
                       "true_stage":row["true_stage"],"predicted_stage":row["predicted_stage"]})
@@ -140,10 +146,10 @@ def export_previews(data_root: Path, method_run: Path) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--method", choices=["hsv"], required=True)
+    parser.add_argument("--method", choices=list(METHOD_LABELS), required=True)
     parser.add_argument("--data", type=Path, default=Path("data/raw"))
     parser.add_argument("--baseline-run", type=Path, required=True)
-    parser.add_argument("--out", type=Path, default=Path("outputs/hsv"))
+    parser.add_argument("--out", type=Path, default=None, help="Default: outputs/<method>")
     parser.add_argument("--jobs", type=int, default=-1)
     args = parser.parse_args()
     try:
@@ -155,15 +161,15 @@ def main() -> None:
         split_id = hashlib.sha256(json.dumps(records,sort_keys=True,separators=(",", ":")).encode()).hexdigest()
         if split_id != reference.get("split_id"):
             raise ValueError("Dataset/split differs from the selected baseline. No training started.")
-        run, metrics = train_baseline(root,args.out,method="hsv",jobs=args.jobs)
-        print(f"HSV model and metrics saved: {run.resolve()}", flush=True)
+        run, metrics = train_baseline(root,args.out or Path("outputs")/args.method,method=args.method,jobs=args.jobs)
+        print(f"{args.method.upper()} model and metrics saved: {run.resolve()}", flush=True)
         comparison = compare_runs(args.baseline_run,run)
         n = export_previews(root,run)
     except (OSError,ValueError,KeyError) as exc:
         parser.exit(1,f"Error: {exc}\n")
     result = metrics["validation"]
-    delta = comparison["hsv_minus_baseline"]
-    print(f"HSV validation: images={result['n_images']}, accuracy={result['accuracy']:.4f}, "
+    delta = comparison[f"{args.method}_minus_baseline"]
+    print(f"{args.method.upper()} validation: images={result['n_images']}, accuracy={result['accuracy']:.4f}, "
           f"balanced_accuracy={result['balanced_accuracy']:.4f}, macro_f1={result['macro_f1']:.4f}")
     print(f"Change vs baseline: accuracy={delta['accuracy']*100:+.2f} percentage points, macro_f1={delta['macro_f1']:+.4f}")
     print(f"Saved {n} preview PNGs: {(run/'previews').resolve()}")

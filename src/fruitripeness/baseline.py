@@ -170,7 +170,7 @@ def evaluate(model, x: np.ndarray, rows: list[dict]) -> tuple[dict, list[dict]]:
 def predict_image(bundle: dict, path: Path) -> dict:
     """Inference helper for the later UI; path names never supply model features."""
     method = bundle.get("method")
-    if bundle.get("feature_id") != FEATURE_ID or method not in {"baseline", "hsv"}:
+    if bundle.get("feature_id") != FEATURE_ID or method not in {"baseline", "hsv", "otsu"}:
         raise ValueError("Model feature/method version is incompatible")
     # Legacy baseline bundles did not store a processing_spec; their path is unchanged.
     if method != "baseline" or "processing_spec" in bundle:
@@ -260,7 +260,8 @@ def train_baseline(data: Path, out: Path, *, evaluate_test: bool = False,
                   ["true_stage",*CLASSES])
     if diagnostics:
         write_csv(run/"processing_diagnostics.csv",diagnostics,
-                  ["split","path","foreground_fraction","mask_status","processing_seconds"])
+                  ["split","path","foreground_fraction","mask_status","processing_seconds",
+                   "otsu_threshold","foreground_polarity"])
     bundle = {"model": model,"method":method,"feature_id":FEATURE_ID,"split_id":split_id,
               "processing_spec":spec,"metadata":metadata}
     joblib.dump(bundle,run/"model.joblib",compress=3)

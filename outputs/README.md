@@ -13,3 +13,9 @@ HSV Method 1 writes outputs/hsv/<run timestamp>/ using the same result layout. I
 also saves processing_diagnostics.csv, comparison_validation.json/.csv, and a
 previews/ folder with original/mask/processed PNGs and an index.csv. The baseline
 run remains untouched. The method command does not evaluate original Test.
+
+Otsu Method 2 uses the same layout under outputs/otsu/<run timestamp>/. Its
+processing_diagnostics.csv also records the automatic threshold and chosen
+foreground polarity for every fit/validation image. Preview PNGs display both.
+The common experiment command selects its output folder from --method unless
+--out is explicitly provided; existing runs are never overwritten.

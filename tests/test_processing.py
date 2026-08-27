@@ -14,10 +14,95 @@ from PIL import Image, ImageDraw
 from test_baseline import make_dataset
 from fruitripeness.baseline import feature_vector, image_features, predict_image, train_baseline
 from fruitripeness.experiment import compare_runs, export_previews, render_preview
-from fruitripeness.processing import process_image, processing_spec
+from fruitripeness.processing import otsu_threshold, process_image, processing_spec
 
 
 class ProcessingTests(unittest.TestCase):
+    def test_otsu_threshold_matches_brute_force_variance_minimum(self):
+        two_levels = np.tile(np.array([30,220], dtype=np.uint8),(25,25))
+        self.assertEqual(otsu_threshold(two_levels),30)  # First threshold in the optimal plateau.
+        gray = np.random.default_rng(7).integers(0,256,(19,23),dtype=np.uint8)
+        def within_variance(t):
+            low, high = gray[gray <= t], gray[gray > t]
+            if not low.size or not high.size:
+                return float("inf")
+            return low.size*low.var()+high.size*high.var()
+        threshold = otsu_threshold(gray)
+        self.assertAlmostEqual(within_variance(threshold),min(within_variance(t) for t in range(255)),places=7)
+
+    def test_otsu_constant_images_and_invalid_arrays(self):
+        for value in [0,128,255]:
+            with self.subTest(value=value):
+                gray=np.full((40,40),value,dtype=np.uint8)
+                self.assertIsNone(otsu_threshold(gray))
+                result=process_image(Image.fromarray(gray),"otsu")
+                self.assertEqual(result.details['mask_status'],'empty')
+                self.assertEqual(result.details['foreground_polarity'],'none')
+                self.assertFalse(np.asarray(result.processed).any())
+        for bad in [np.zeros((5,5),dtype=float),np.zeros((5,5,3),dtype=np.uint8),np.zeros((0,0),dtype=np.uint8)]:
+            with self.assertRaises(ValueError):
+                otsu_threshold(bad)
+
+    def test_otsu_polarity_handles_dark_and_light_backgrounds_preserving_rgb(self):
+        for background, polarity in [("white","dark"),("black","bright")]:
+            with self.subTest(background=background):
+                image=Image.new("RGB",(100,100),background)
+                colour=(220,40,10)
+                ImageDraw.Draw(image).rectangle((20,20,79,79),fill=colour)
+                original=image.tobytes()
+                result=process_image(image,"otsu")
+                self.assertEqual(result.details['foreground_polarity'],polarity)
+                self.assertTrue(result.mask[50,50])
+                self.assertFalse(result.mask[0,0])
+                self.assertEqual(result.processed.getpixel((50,50)),colour)
+                self.assertEqual(image.tobytes(),original)
+                with tempfile.TemporaryDirectory() as tmp:
+                    path=Path(tmp)/'unnamed.png';image.save(path)
+                    np.testing.assert_array_equal(image_features(path,method='otsu'),feature_vector(result.processed))
+
+    def test_otsu_equal_border_and_area_tie_chooses_bright(self):
+        gray=np.full((100,100),30,dtype=np.uint8);gray[:,50:]=220
+        result=process_image(Image.fromarray(gray),'otsu')
+        self.assertEqual(result.details['foreground_polarity'],'bright')
+        self.assertFalse(result.mask[50,25])
+        self.assertTrue(result.mask[50,75])
+
+    def test_otsu_end_to_end_exports_and_saved_model_agree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/'data';make_dataset(root)
+            # Put fixture colours inside a neutral background to exercise segmentation.
+            for path in root.rglob('*.png'):
+                with Image.open(path) as source:
+                    colour=source.getpixel((0,0))
+                image=Image.new('RGB',(40,40),'white')
+                ImageDraw.Draw(image).rectangle((8,8,31,31),fill=colour)
+                image.save(path)
+            with redirect_stdout(io.StringIO()):
+                baseline,_=train_baseline(root,Path(tmp)/'baseline',jobs=1,trees=8)
+                with patch('fruitripeness.baseline.process_image',wraps=process_image) as process:
+                    run,metrics=train_baseline(root,Path(tmp)/'otsu',jobs=1,trees=8,method='otsu')
+                self.assertEqual(process.call_count,36)
+            comparison=compare_runs(baseline,run)
+            self.assertEqual(comparison['otsu']['accuracy'],metrics['validation']['accuracy'])
+            self.assertNotIn('hsv',comparison)
+            with (run/'processing_diagnostics.csv').open(newline='') as f:
+                diagnostics=list(csv.DictReader(f))
+            self.assertEqual(len(diagnostics),36)
+            self.assertTrue(all(r['otsu_threshold'] for r in diagnostics))
+            self.assertTrue(all(r['foreground_polarity']=='dark' for r in diagnostics))
+            self.assertNotIn('test',{r['split'] for r in diagnostics})
+            n=export_previews(root,run)
+            self.assertGreaterEqual(n,6)
+            with Image.open(next((run/'previews').glob('*.png'))) as preview:
+                self.assertEqual(preview.size,(1000,460))
+            with (run/'predictions_validation.csv').open(newline='') as f:
+                row=next(csv.DictReader(f))
+            bundle=joblib.load(run/'model.joblib')  # Our own model only.
+            predicted=predict_image(bundle,root/row['path'])
+            self.assertEqual(predicted['predicted_stage'],row['predicted_stage'])
+            for c,score in predicted['scores'].items():
+                self.assertAlmostEqual(score,float(row['score_'+c]))
+
     def test_hsv_accepts_different_hues_and_preserves_original_pixels(self):
         for colour in [(220,30,20),(30,200,40),(240,220,30),(110,60,20)]:
             with self.subTest(colour=colour):
