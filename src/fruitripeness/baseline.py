@@ -22,6 +22,7 @@ import PIL
 from PIL import Image, ImageOps
 import sklearn
 import scipy
+import threadpoolctl
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, balanced_accuracy_score, classification_report, confusion_matrix
 from sklearn.model_selection import train_test_split
@@ -170,7 +171,7 @@ def evaluate(model, x: np.ndarray, rows: list[dict]) -> tuple[dict, list[dict]]:
 def predict_image(bundle: dict, path: Path) -> dict:
     """Inference helper for the later UI; path names never supply model features."""
     method = bundle.get("method")
-    if bundle.get("feature_id") != FEATURE_ID or method not in {"baseline", "hsv", "otsu"}:
+    if bundle.get("feature_id") != FEATURE_ID or method not in {"baseline", "hsv", "otsu", "kmeans"}:
         raise ValueError("Model feature/method version is incompatible")
     # Legacy baseline bundles did not store a processing_spec; their path is unchanged.
     if method != "baseline" or "processing_spec" in bundle:
@@ -244,7 +245,7 @@ def train_baseline(data: Path, out: Path, *, evaluate_test: bool = False,
         "training_feature_seconds": train_feature_seconds, "model_fit_seconds": fit_seconds,
         "versions": {"python": platform.python_version(), "numpy": np.__version__,
                      "Pillow": PIL.__version__, "scikit-learn": sklearn.__version__, "joblib": joblib.__version__,
-                     "scipy": scipy.__version__},
+                     "scipy": scipy.__version__, "threadpoolctl": threadpoolctl.__version__},
         "platform": platform.platform(),
         "limitations": ["Supplied duplicates and labels retained by project decision; scores can be inflated or distorted.",
                         "Validation is a fixed sample from supplied Train, not a cleaned or group-independent split.",
@@ -261,7 +262,8 @@ def train_baseline(data: Path, out: Path, *, evaluate_test: bool = False,
     if diagnostics:
         write_csv(run/"processing_diagnostics.csv",diagnostics,
                   ["split","path","foreground_fraction","mask_status","processing_seconds",
-                   "otsu_threshold","foreground_polarity"])
+                   "otsu_threshold","foreground_polarity","kmeans_clusters","kmeans_sample_pixels",
+                   "background_cluster","background_border_fraction","kmeans_iterations"])
     bundle = {"model": model,"method":method,"feature_id":FEATURE_ID,"split_id":split_id,
               "processing_spec":spec,"metadata":metadata}
     joblib.dump(bundle,run/"model.joblib",compress=3)

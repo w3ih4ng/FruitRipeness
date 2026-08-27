@@ -1,8 +1,9 @@
 # Fruit Ripeness — Mode A
 
 One continuing VS Code/GitHub project for a five-method image-processing comparison
-and a team hybrid. The baseline, HSV Method 1 and Otsu Method 2 are implemented.
-Three further processing methods, the hybrid and UI will be added incrementally.
+and a team hybrid. The baseline, HSV Method 1, Otsu Method 2 and K-means Method 3
+are implemented. Two further processing methods, the hybrid and UI will be added
+incrementally.
 
 ## 1. Create the GitHub repository
 
@@ -48,7 +49,7 @@ After applying the baseline update, run:
 .\.venv\Scripts\python.exe -m fruitripeness.baseline --data data/raw
 ```
 
-Expect 25 tests after the Otsu update. The baseline fits on 3,547 images from original Train and validates
+Expect 31 tests after the K-means update. The baseline fits on 3,547 images from original Train and validates
 on a fixed 887-image subset; the original 180-image Test set is unchanged and not
 scored by default. Results and a model go into a new timestamped folder under
 `outputs/baseline/`. The run prints that exact path. See `docs/BASELINE.md`.
@@ -80,14 +81,14 @@ On another laptop clone this repository and create a new .venv; do not copy .ven
 
 ## Next milestone
 
-Run Otsu Method 2 and compare with your saved baseline. See `docs/METHOD2_OTSU.md`.
-The HSV command in `docs/METHOD1_HSV.md` remains supported; no rerun is required.
+Run K-means Method 3 and compare with your saved baseline. See `docs/METHOD3_KMEANS.md`.
+The HSV and Otsu commands remain supported; existing models do not need a rerun.
 Use the same dataset, validation split, feature extractor and model parameters.
 `docs/EXPERIMENT_AND_UI_PLAN.md` includes single-image, multi-image and folder input,
 comparison of five methods plus hybrid, and PNG/CSV exports. This UI is not built yet.
 
 The methods were tested on Python 3.12.13/Linux. The user reproduced baseline and
-HSV results on Windows; rerun the tests after each update on Windows.
+HSV and Otsu results on Windows; rerun the tests after each update on Windows.
 
 ## Sources
 

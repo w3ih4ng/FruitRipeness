@@ -14,10 +14,119 @@ from PIL import Image, ImageDraw
 from test_baseline import make_dataset
 from fruitripeness.baseline import feature_vector, image_features, predict_image, train_baseline
 from fruitripeness.experiment import compare_runs, export_previews, render_preview
-from fruitripeness.processing import otsu_threshold, process_image, processing_spec
+from fruitripeness.processing import kmeans_candidate_mask, otsu_threshold, process_image, processing_spec
 
 
 class ProcessingTests(unittest.TestCase):
+    def test_kmeans_retains_multiple_colours_and_preserves_original_rgb(self):
+        for background in ['white', 'black']:
+            with self.subTest(background=background):
+                image=Image.new('RGB',(100,100),background)
+                draw=ImageDraw.Draw(image)
+                draw.rectangle((15,15,44,84),fill=(210,30,20))
+                draw.rectangle((55,15,84,84),fill=(20,180,50))
+                before=image.tobytes()
+                result=process_image(image,'kmeans')
+                self.assertEqual(result.details['kmeans_clusters'],3)
+                self.assertTrue(result.mask[50,30])
+                self.assertTrue(result.mask[50,70])
+                self.assertFalse(result.mask[0,0])
+                np.testing.assert_array_equal(np.asarray(result.processed)[result.mask],
+                                              np.asarray(image)[result.mask])
+                self.assertFalse(np.asarray(result.processed)[~result.mask].any())
+                self.assertEqual(image.tobytes(),before)
+
+    def test_kmeans_fewer_colours_and_tiny_images_do_not_fail(self):
+        for size in [(1,1),(1,30),(50,50)]:
+            with self.subTest(size=size):
+                result=process_image(Image.new('RGB',size,(150,30,20)),'kmeans')
+                self.assertEqual(result.details['kmeans_clusters'],1)
+                self.assertEqual(result.details['kmeans_iterations'],0)
+                self.assertEqual(result.details['mask_status'],'empty')
+                self.assertFalse(result.mask.any())
+        image=Image.new('RGB',(80,80),'white')
+        ImageDraw.Draw(image).rectangle((20,20,59,59),fill='red')
+        result=process_image(image,'kmeans')
+        self.assertEqual(result.details['kmeans_clusters'],2)
+        self.assertTrue(result.mask[40,40])
+        self.assertFalse(result.mask[0,0])
+
+    def test_kmeans_determinism_grid_limit_and_chunked_assignment(self):
+        image=Image.fromarray(np.random.default_rng(123).integers(0,256,(103,137,3),dtype=np.uint8))
+        spec=processing_spec('kmeans')
+        first,details=kmeans_candidate_mask(image,spec)
+        second,details2=kmeans_candidate_mask(image,{**spec,'assignment_chunk_size':97})
+        np.testing.assert_array_equal(first,second)
+        self.assertEqual(details,details2)
+        self.assertEqual(details['kmeans_sample_pixels'],4096)
+        self.assertEqual(first.shape,(103,137))
+        self.assertGreaterEqual(details['background_border_fraction'],1/3)
+
+    def test_kmeans_equal_border_and_area_tie_uses_centroid_order(self):
+        # Two equal halves: canonical dark centroid is background, independent
+        # of the arbitrary IDs returned by the underlying clustering fit.
+        pixels=np.full((100,100,3),30,dtype=np.uint8);pixels[:,50:]=220
+        result=process_image(Image.fromarray(pixels),'kmeans')
+        self.assertEqual(result.details['background_cluster'],0)
+        self.assertEqual(result.details['background_border_fraction'],0.5)
+        self.assertFalse(result.mask[50,25])
+        self.assertTrue(result.mask[50,75])
+        # Equal frame counts but more bright pixels inside: whole-image count
+        # must take priority over the lower canonical ID.
+        pixels[5:95,30:50]=220
+        result=process_image(Image.fromarray(pixels),'kmeans')
+        self.assertEqual(result.details['background_cluster'],1)
+        self.assertFalse(result.mask[50,40])
+        self.assertTrue(result.mask[50,15])
+
+    def test_kmeans_saved_settings_mismatch_is_rejected(self):
+        spec=processing_spec('kmeans')
+        spec['background_rgb'][0]=255
+        self.assertEqual(processing_spec('kmeans')['background_rgb'],[0,0,0])
+        with self.assertRaisesRegex(ValueError,'settings differ'):
+            predict_image({'method':'kmeans','feature_id':'rgb_pixels_32x32_v1',
+                           'processing_spec':spec},Path('unused.png'))
+
+    def test_kmeans_end_to_end_exports_features_and_saved_model_agree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/'data';make_dataset(root)
+            for path in root.rglob('*.png'):
+                with Image.open(path) as source:
+                    colour=source.getpixel((0,0))
+                image=Image.new('RGB',(40,40),'white')
+                ImageDraw.Draw(image).rectangle((8,8,31,31),fill=colour)
+                image.save(path)
+            with redirect_stdout(io.StringIO()):
+                baseline,_=train_baseline(root,Path(tmp)/'baseline',jobs=1,trees=8)
+                with patch('fruitripeness.baseline.process_image',wraps=process_image) as process:
+                    run,metrics=train_baseline(root,Path(tmp)/'kmeans',jobs=1,trees=8,method='kmeans')
+                self.assertEqual(process.call_count,36)  # Test pixels never processed.
+            comparison=compare_runs(baseline,run)
+            self.assertEqual(comparison['kmeans']['accuracy'],metrics['validation']['accuracy'])
+            self.assertAlmostEqual(comparison['kmeans_minus_baseline']['accuracy'],
+                                   comparison['kmeans']['accuracy']-comparison['baseline']['accuracy'])
+            with (run/'processing_diagnostics.csv').open(newline='') as f:
+                diagnostics=list(csv.DictReader(f))
+            self.assertEqual(len(diagnostics),36)
+            self.assertTrue(all(r['kmeans_clusters']=='2' for r in diagnostics))
+            self.assertTrue(all(float(r['background_border_fraction'])==1 for r in diagnostics))
+            self.assertNotIn('test',{r['split'] for r in diagnostics})
+            n=export_previews(root,run)
+            self.assertGreaterEqual(n,6)
+            with Image.open(next((run/'previews').glob('*.png'))) as preview:
+                self.assertEqual(preview.size,(1000,460))
+            with (run/'predictions_validation.csv').open(newline='') as f:
+                row=next(csv.DictReader(f))
+            path=root/row['path']
+            with Image.open(path) as source:
+                manual=feature_vector(process_image(source,'kmeans').processed)
+            np.testing.assert_array_equal(manual,image_features(path,method='kmeans'))
+            bundle=joblib.load(run/'model.joblib')  # Our own model only.
+            predicted=predict_image(bundle,path)
+            self.assertEqual(predicted['predicted_stage'],row['predicted_stage'])
+            for c,score in predicted['scores'].items():
+                self.assertAlmostEqual(score,float(row['score_'+c]))
+
     def test_otsu_threshold_matches_brute_force_variance_minimum(self):
         two_levels = np.tile(np.array([30,220], dtype=np.uint8),(25,25))
         self.assertEqual(otsu_threshold(two_levels),30)  # First threshold in the optimal plateau.

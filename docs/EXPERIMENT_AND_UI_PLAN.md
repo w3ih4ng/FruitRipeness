@@ -2,8 +2,8 @@
 
 ## Current status
 
-Baseline, HSV Method 1 and Otsu Method 2 are implemented, sharing RGB features (32 x 32)
-and a Random Forest. The audit is optional, not a prerequisite. The remaining three
+Baseline, HSV Method 1, Otsu Method 2 and K-means Method 3 are implemented, sharing RGB
+features (32 x 32) and a Random Forest. The audit is optional, not a prerequisite. The remaining two
 processing methods, the hybrid and the UI remain future milestones. Continue editing this repository;
 no replacement starter folder is needed.
 
@@ -41,12 +41,12 @@ Provisional candidates to test on sample images before assigning members:
 |---|---|---|
 | hsv | HSV S/V foreground thresholding (implemented) | Accept all hues; S >= 0.20, V >= 0.10, documented mask cleanup; not a semantic fruit detector |
 | otsu | Grayscale Otsu segmentation (implemented) | Automatic threshold; class occupying less of the outer 5% frame is foreground; shared mask cleanup |
-| kmeans | K-means colour clustering | Select foreground clusters without access to true test labels |
+| kmeans | RGB K-means colour clustering (implemented) | Up to 3 clusters, fixed grid sample and seed; most common border cluster is background; shared mask cleanup |
 | grabcut | GrabCut foreground extraction | Automatic initialisation; no manual test-image tuning |
 | watershed | Marker-controlled watershed | Document automatic foreground/background markers |
 | hybrid | Enhanced combined method | Specify from validation evidence, then freeze before testing |
 
-HSV v1 and Otsu v1 are implemented with fixed rules. The other three techniques remain
+HSV v1, Otsu v1 and K-means v1 are implemented with fixed rules. The other two techniques remain
 candidates until implemented and reviewed. The uploaded images have varied
 backgrounds and multiple objects; preliminary trials may justify replacing a method.
 Use a raw/minimal-preprocessing baseline as a seventh EXPERIMENTAL reference; the
@@ -119,8 +119,8 @@ Choose the UI framework at the implementation milestone; no framework installed 
 
 1. Private GitHub repository and Python environment: completed by the user.
 2. Run the baseline on the original extracted dataset and inspect validation outputs.
-3. HSV Method 1 completed locally; Otsu Method 2 ready for the same run and review.
-4. Add Methods 3-5 with the same split/features/model.
+3. Baseline, HSV and Otsu reproduced by the user; K-means Method 3 ready to run and review.
+4. Add Methods 4-5 with the same split/features/model.
 5. Develop the hybrid using validation evidence.
 6. Add single-image, multiple-image and folder UI workflows with comparison/export.
 7. Freeze choices, run final original-Test comparison and produce report figures.

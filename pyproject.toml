@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fruit-ripeness-study"
-version = "0.4.0"
-description = "Mode A multi-fruit image-processing comparison: baseline, HSV and Otsu"
+version = "0.5.0"
+description = "Mode A multi-fruit image-processing comparison: baseline, HSV, Otsu and K-means"
 requires-python = ">=3.12,<3.13"
-dependencies = ["numpy==2.3.5", "Pillow==12.3.0", "scikit-learn==1.8.0", "joblib==1.5.3", "scipy==1.17.0"]
+dependencies = ["numpy==2.3.5", "Pillow==12.3.0", "scikit-learn==1.8.0", "joblib==1.5.3", "scipy==1.17.0", "threadpoolctl==3.6.0"]
 
 [project.scripts]
 fruit-audit = "fruitripeness.audit:main"

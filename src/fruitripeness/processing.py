@@ -8,6 +8,8 @@ from dataclasses import dataclass
 import numpy as np
 from PIL import Image, ImageOps
 from scipy import ndimage
+from sklearn.cluster import KMeans
+from threadpoolctl import threadpool_limits
 
 HSV_SPEC = {
     "version": "hsv_sv_foreground_v1",
@@ -41,6 +43,34 @@ OTSU_SPEC = {
     "working_size": "original image resolution; dataset images are 300x300",
 }
 
+KMEANS_SPEC = {
+    "version": "kmeans_rgb_border_v1",
+    "colour_space": "RGB float64 / 255; Euclidean distance",
+    "n_clusters": 3,
+    "sample_axis_limit": 64,
+    "sampling_rule": "uniform grid including endpoints; floor linspace coordinates; no interpolation",
+    "init": "k-means++",
+    "n_init": 3,
+    "max_iter": 50,
+    "tol": 0.0001,
+    "random_state": 42,
+    "algorithm": "lloyd",
+    "fit_threads": 1,
+    "assignment_chunk_size": 16384,
+    "cluster_order": "ascending centroid R, then G, then B; nearest-centroid ties choose first",
+    "border_fraction": 0.05,
+    "background_rule": "most border pixels; tie chooses most whole-image pixels; final tie chooses first cluster",
+    "few_colours_policy": "reduce k to unique sampled colours; one colour yields empty mask",
+    "opening_kernel": 3,
+    "closing_kernel": 5,
+    "min_component_fraction": 0.005,
+    "min_component_pixels": 16,
+    "fill_enclosed_holes": True,
+    "background_rgb": [0, 0, 0],
+    "empty_mask_policy": "black image, flag for review, no image exclusion",
+    "working_size": "original image resolution; dataset images are 300x300",
+}
+
 
 def processing_spec(method: str) -> dict:
     if method == "baseline":
@@ -50,6 +80,8 @@ def processing_spec(method: str) -> dict:
         return {**HSV_SPEC, "background_rgb": list(HSV_SPEC["background_rgb"])}
     if method == "otsu":
         return {**OTSU_SPEC, "background_rgb": list(OTSU_SPEC["background_rgb"])}
+    if method == "kmeans":
+        return {**KMEANS_SPEC, "background_rgb": list(KMEANS_SPEC["background_rgb"])}
     raise ValueError(f"Unsupported method: {method}")
 
 
@@ -106,6 +138,57 @@ def otsu_candidate_mask(rgb: Image.Image, spec: dict) -> tuple[np.ndarray, dict]
     }
 
 
+def kmeans_candidate_mask(rgb: Image.Image, spec: dict) -> tuple[np.ndarray, dict]:
+    """Fit colour clusters independently per image; select background by its frame.
+
+    Sampling bounds the clustering work without resizing/interpolating colours.
+    Every original pixel is then assigned to a centroid. Cluster IDs are colour
+    groups, never ripeness classes. This function consumes no labels or filenames.
+    """
+    pixels = np.asarray(rgb, dtype=np.uint8)
+    height, width = pixels.shape[:2]
+    limit = spec["sample_axis_limit"]
+    ys = np.linspace(0, height-1, min(height, limit), dtype=int)
+    xs = np.linspace(0, width-1, min(width, limit), dtype=int)
+    sample = pixels[ys[:, None], xs].reshape(-1, 3).astype(np.float64) / 255.0
+    clusters = min(spec["n_clusters"], len(np.unique(sample, axis=0)))
+    details = {"kmeans_clusters": clusters, "kmeans_sample_pixels": len(sample)}
+    if clusters == 1:
+        return np.zeros((height, width), dtype=bool), {
+            **details, "background_cluster": 0, "background_border_fraction": 1.0,
+            "kmeans_iterations": 0,
+        }
+    estimator = KMeans(n_clusters=clusters, init=spec["init"], n_init=spec["n_init"],
+                       max_iter=spec["max_iter"], tol=spec["tol"],
+                       random_state=spec["random_state"], algorithm=spec["algorithm"])
+    # Bound native threads for these small fits, including Windows/MKL builds.
+    # Restore prior limits afterwards; Random Forest parallelism is unchanged.
+    with threadpool_limits(limits=spec["fit_threads"]):
+        estimator.fit(sample)
+    centres = estimator.cluster_centers_
+    centres = centres[np.lexsort((centres[:, 2], centres[:, 1], centres[:, 0]))]
+    flat = pixels.reshape(-1, 3)
+    labels = np.empty(len(flat), dtype=np.int32)
+    chunk = spec["assignment_chunk_size"]
+    for start in range(0, len(flat), chunk):
+        values = flat[start:start+chunk].astype(np.float64) / 255.0
+        distances = ((values[:, None, :] - centres[None, :, :])**2).sum(axis=2)
+        labels[start:start+chunk] = np.argmin(distances, axis=1)
+    labels = labels.reshape(height, width)
+    frame = max(1, int(round(min(height, width)*spec["border_fraction"])))
+    border = np.zeros((height, width), dtype=bool)
+    border[:frame, :] = border[-frame:, :] = True
+    border[:, :frame] = border[:, -frame:] = True
+    border_counts = np.bincount(labels[border], minlength=clusters)
+    total_counts = np.bincount(labels.ravel(), minlength=clusters)
+    background = max(range(clusters), key=lambda c: (border_counts[c], total_counts[c], -c))
+    return labels != background, {
+        **details, "background_cluster": background,
+        "background_border_fraction": float(border_counts[background] / border.sum()),
+        "kmeans_iterations": int(estimator.n_iter_),
+    }
+
+
 def process_image(image: Image.Image, method: str) -> ProcessingResult:
     spec = processing_spec(method)
     rgb = ImageOps.exif_transpose(image).convert("RGB")
@@ -117,8 +200,10 @@ def process_image(image: Image.Image, method: str) -> ProcessingResult:
     if method == "hsv":
         hsv = np.asarray(rgb.convert("HSV"), dtype=np.float32) / 255.0
         mask = (hsv[:, :, 1] >= spec["saturation_min"]) & (hsv[:, :, 2] >= spec["value_min"])
-    else:
+    elif method == "otsu":
         mask, details = otsu_candidate_mask(rgb, spec)
+    else:
+        mask, details = kmeans_candidate_mask(rgb, spec)
     # Edge padding prevents artificial black rims on fully coloured images.
     pad = spec["closing_kernel"]
     padded = np.pad(mask, pad, mode="edge")
