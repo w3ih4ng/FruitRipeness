@@ -21,11 +21,13 @@ import numpy as np
 import PIL
 from PIL import Image, ImageOps
 import sklearn
+import scipy
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, balanced_accuracy_score, classification_report, confusion_matrix
 from sklearn.model_selection import train_test_split
 
 from .audit import EXTENSIONS, parse_labels, write_csv
+from .processing import process_image, processing_spec
 
 CLASSES = ["unripe", "ripe", "overripe"]
 FEATURE_ID = "rgb_pixels_32x32_v1"
@@ -93,20 +95,33 @@ def feature_vector(image: Image.Image) -> np.ndarray:
     return np.asarray(resized, dtype=np.float32).reshape(-1) / np.float32(255)
 
 
-def image_features(path: Path, expected_sha256: str | None = None) -> np.ndarray:
+def image_features(path: Path, expected_sha256: str | None = None, *, method: str = "baseline",
+                   diagnostics: list | None = None) -> np.ndarray:
     blob = Path(path).read_bytes()
     if expected_sha256 and hashlib.sha256(blob).hexdigest() != expected_sha256:
         raise ValueError(f"Image changed during this run: {path}")
     with Image.open(io.BytesIO(blob)) as image:
         image.load()
-        return feature_vector(image)
+        if method == "baseline":
+            # Preserve the exact original baseline feature path and old-model behaviour.
+            return feature_vector(image)
+        start = time.perf_counter()
+        result = process_image(image, method)
+        elapsed = time.perf_counter() - start
+        if diagnostics is not None:
+            diagnostics.append({**result.details, "processing_seconds": elapsed})
+        return feature_vector(result.processed)
 
 
-def feature_matrix(root: Path, rows: list[dict]) -> np.ndarray:
+def feature_matrix(root: Path, rows: list[dict], *, method: str = "baseline",
+                   diagnostics: list | None = None) -> np.ndarray:
     features = np.empty((len(rows), 32*32*3), dtype=np.float32)
     for i,row in enumerate(rows):
         try:
-            features[i] = image_features(root/row["path"], row["sha256"])
+            details = []
+            features[i] = image_features(root/row["path"], row["sha256"], method=method, diagnostics=details)
+            if diagnostics is not None and details:
+                diagnostics.append({"path": row["path"], **details[0]})
         except (OSError, ValueError, Image.DecompressionBombError) as exc:
             raise ValueError(f"Cannot process {row['path']}; no image was silently skipped: {exc}") from exc
         if (i+1) % 1000 == 0:
@@ -154,16 +169,23 @@ def evaluate(model, x: np.ndarray, rows: list[dict]) -> tuple[dict, list[dict]]:
 
 def predict_image(bundle: dict, path: Path) -> dict:
     """Inference helper for the later UI; path names never supply model features."""
-    if bundle.get("feature_id") != FEATURE_ID or bundle.get("method") != "baseline":
-        raise ValueError("Model feature/method version is incompatible with this baseline")
-    scores = bundle["model"].predict_proba(image_features(path).reshape(1,-1))[0]
+    method = bundle.get("method")
+    if bundle.get("feature_id") != FEATURE_ID or method not in {"baseline", "hsv"}:
+        raise ValueError("Model feature/method version is incompatible")
+    # Legacy baseline bundles did not store a processing_spec; their path is unchanged.
+    if method != "baseline" or "processing_spec" in bundle:
+        if bundle.get("processing_spec") != processing_spec(method):
+            raise ValueError("Saved model processing settings differ from the installed implementation")
+    scores = bundle["model"].predict_proba(image_features(path, method=method).reshape(1,-1))[0]
     classes = bundle["model"].classes_
     return {"predicted_stage": str(classes[scores.argmax()]),
             "scores": {str(c): float(v) for c,v in zip(classes,scores)}}
 
 
 def train_baseline(data: Path, out: Path, *, evaluate_test: bool = False,
-                   jobs: int = -1, trees: int = 300) -> tuple[Path,dict]:
+                   jobs: int = -1, trees: int = 300, method: str = "baseline") -> tuple[Path,dict]:
+    """Shared experiment engine; default remains the backward-compatible baseline."""
+    spec = processing_spec(method)
     if jobs == 0 or trees < 1:
         raise ValueError("jobs must not be zero and trees must be positive")
     root = resolve_dataset_root(data)
@@ -176,9 +198,10 @@ def train_baseline(data: Path, out: Path, *, evaluate_test: bool = False,
     manifest_json = json.dumps(records,sort_keys=True,separators=(",",":"))
     split_id = hashlib.sha256(manifest_json.encode()).hexdigest()
     sets = {s:[r for r in records if r["split"] == s] for s in ["train","validation","test"]}
-    print("Preparing training features (RGB pixels, 32 x 32)...", flush=True)
+    print(f"Preparing {method} training features (RGB pixels, 32 x 32)...", flush=True)
     start = time.perf_counter()
-    x_train = feature_matrix(root,sets["train"])
+    train_diagnostics = []
+    x_train = feature_matrix(root,sets["train"],method=method,diagnostics=train_diagnostics)
     train_feature_seconds = time.perf_counter()-start
     model = RandomForestClassifier(n_estimators=trees,max_features="sqrt",class_weight="balanced",
                                    random_state=SEED,n_jobs=jobs)
@@ -188,19 +211,29 @@ def train_baseline(data: Path, out: Path, *, evaluate_test: bool = False,
     fit_seconds = time.perf_counter()-start
     del x_train
     metrics, tables = {}, {}
+    diagnostics = [{"split": "train", **r} for r in train_diagnostics]
     for split in ["validation"] + (["test"] if evaluate_test else []):
         print(f"Evaluating {split}...", flush=True)
         start = time.perf_counter()
-        x = feature_matrix(root,sets[split])
+        split_diagnostics = []
+        x = feature_matrix(root,sets[split],method=method,diagnostics=split_diagnostics)
+        diagnostics.extend({"split": split, **r} for r in split_diagnostics)
         feature_seconds = time.perf_counter()-start
         metrics[split],tables[split] = evaluate(model,x,sets[split])
         metrics[split]["image_loading_and_feature_seconds"] = feature_seconds
         metrics[split]["image_loading_and_feature_ms_per_image"] = feature_seconds*1000/len(sets[split])
+        if split_diagnostics:
+            metrics[split]["mask_diagnostics"] = {
+                "mean_foreground_fraction": float(np.mean([r["foreground_fraction"] for r in split_diagnostics])),
+                "status_counts": dict(Counter(r["mask_status"] for r in split_diagnostics)),
+                "processing_seconds": sum(r["processing_seconds"] for r in split_diagnostics),
+            }
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
     run = Path(out)/stamp
     run.mkdir(parents=True,exist_ok=False)
     metadata = {
-        "status": "completed", "created_utc": stamp, "method": "baseline", "feature_id": FEATURE_ID,
+        "status": "completed", "created_utc": stamp, "method": method, "feature_id": FEATURE_ID,
+        "processing_spec": spec,
         "model_type": "RandomForestClassifier", "model_parameters": model.get_params(),
         "model_class_order": model.classes_.tolist(), "metric_class_order": CLASSES,
         "counts": counts, "split_id": split_id, "seed": SEED,
@@ -210,7 +243,8 @@ def train_baseline(data: Path, out: Path, *, evaluate_test: bool = False,
         "target": "image-level ripeness stage; fruit type is metadata, not a predicted output",
         "training_feature_seconds": train_feature_seconds, "model_fit_seconds": fit_seconds,
         "versions": {"python": platform.python_version(), "numpy": np.__version__,
-                     "Pillow": PIL.__version__, "scikit-learn": sklearn.__version__, "joblib": joblib.__version__},
+                     "Pillow": PIL.__version__, "scikit-learn": sklearn.__version__, "joblib": joblib.__version__,
+                     "scipy": scipy.__version__},
         "platform": platform.platform(),
         "limitations": ["Supplied duplicates and labels retained by project decision; scores can be inflated or distorted.",
                         "Validation is a fixed sample from supplied Train, not a cleaned or group-independent split.",
@@ -224,7 +258,11 @@ def train_baseline(data: Path, out: Path, *, evaluate_test: bool = False,
         write_csv(run/f"confusion_matrix_{split}.csv",
                   [{"true_stage":c,**dict(zip(CLASSES,row))} for c,row in zip(CLASSES,matrix)],
                   ["true_stage",*CLASSES])
-    bundle = {"model": model,"method":"baseline","feature_id":FEATURE_ID,"split_id":split_id,"metadata":metadata}
+    if diagnostics:
+        write_csv(run/"processing_diagnostics.csv",diagnostics,
+                  ["split","path","foreground_fraction","mask_status","processing_seconds"])
+    bundle = {"model": model,"method":method,"feature_id":FEATURE_ID,"split_id":split_id,
+              "processing_spec":spec,"metadata":metadata}
     joblib.dump(bundle,run/"model.joblib",compress=3)
     (run/"metrics.json").write_text(json.dumps(metrics,indent=2),encoding="utf-8")
     (run/"metadata.json").write_text(json.dumps(metadata,indent=2),encoding="utf-8")

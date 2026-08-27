@@ -4,14 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fruit-ripeness-study"
-version = "0.2.0"
-description = "Mode A multi-fruit image-processing comparison: baseline training"
+version = "0.3.0"
+description = "Mode A multi-fruit image-processing comparison: baseline and HSV"
 requires-python = ">=3.12,<3.13"
-dependencies = ["numpy==2.3.5", "Pillow==12.3.0", "scikit-learn==1.8.0", "joblib==1.5.3"]
+dependencies = ["numpy==2.3.5", "Pillow==12.3.0", "scikit-learn==1.8.0", "joblib==1.5.3", "scipy==1.17.0"]
 
 [project.scripts]
 fruit-audit = "fruitripeness.audit:main"
 fruit-baseline = "fruitripeness.baseline:main"
+fruit-experiment = "fruitripeness.experiment:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -2,9 +2,9 @@
 
 ## Current status
 
-Baseline training is implemented: minimally prepared RGB pixels (32 x 32) and a
-Random Forest. The audit is optional, not a prerequisite. Five processing methods,
-the hybrid and the UI remain future milestones. Continue editing this repository;
+Baseline and HSV Method 1 training are implemented, sharing RGB features (32 x 32)
+and a Random Forest. The audit is optional, not a prerequisite. The remaining four
+processing methods, the hybrid and the UI remain future milestones. Continue editing this repository;
 no replacement starter folder is needed.
 
 ## Confirmed dataset policy
@@ -39,14 +39,15 @@ Provisional candidates to test on sample images before assigning members:
 
 | ID | Main technique | Qualification |
 |---|---|---|
-| hsv | HSV colour segmentation | No universal green = unripe rule; avoid retaining only a maturity-specific patch |
+| hsv | HSV S/V foreground thresholding (implemented) | Accept all hues; S >= 0.20, V >= 0.10, documented mask cleanup; not a semantic fruit detector |
 | otsu | Otsu threshold segmentation | Choose the channel and foreground rule on validation data |
 | kmeans | K-means colour clustering | Select foreground clusters without access to true test labels |
 | grabcut | GrabCut foreground extraction | Automatic initialisation; no manual test-image tuning |
 | watershed | Marker-controlled watershed | Document automatic foreground/background markers |
 | hybrid | Enhanced combined method | Specify from validation evidence, then freeze before testing |
 
-These are candidates, not a confirmed final list. The uploaded images have varied
+HSV v1 is now implemented with fixed parameters. The other four techniques remain
+candidates until implemented and reviewed. The uploaded images have varied
 backgrounds and multiple objects; preliminary trials may justify replacing a method.
 Use a raw/minimal-preprocessing baseline as a seventh EXPERIMENTAL reference; the
 requested UI still has five methods plus one hybrid. The initial fixed classifier
@@ -118,7 +119,8 @@ Choose the UI framework at the implementation milestone; no framework installed 
 
 1. Private GitHub repository and Python environment: completed by the user.
 2. Run the baseline on the original extracted dataset and inspect validation outputs.
-3. Implement and test one member method at a time, using the same split/features/model.
-4. Develop the hybrid using validation evidence.
-5. Add single-image, multiple-image and folder UI workflows with comparison/export.
-6. Freeze choices, run final original-Test comparison and produce report figures.
+3. HSV Method 1 implemented; run it locally and inspect comparison/previews.
+4. Add the remaining member methods with the same split/features/model.
+5. Develop the hybrid using validation evidence.
+6. Add single-image, multiple-image and folder UI workflows with comparison/export.
+7. Freeze choices, run final original-Test comparison and produce report figures.

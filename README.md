@@ -1,8 +1,8 @@
 # Fruit Ripeness — Mode A
 
 One continuing VS Code/GitHub project for a five-method image-processing comparison
-and a team hybrid. The dataset audit and baseline classifier are implemented.
-The five processing methods, hybrid and UI will be added incrementally.
+and a team hybrid. The dataset audit, baseline classifier and HSV Method 1 are implemented.
+Four further processing methods, the hybrid and UI will be added incrementally.
 
 ## 1. Create the GitHub repository
 
@@ -48,7 +48,7 @@ After applying the baseline update, run:
 .\.venv\Scripts\python.exe -m fruitripeness.baseline --data data/raw
 ```
 
-Expect 13 tests. The baseline fits on 3,547 images from original Train and validates
+Expect 20 tests after the HSV update. The baseline fits on 3,547 images from original Train and validates
 on a fixed 887-image subset; the original 180-image Test set is unchanged and not
 scored by default. Results and a model go into a new timestamped folder under
 `outputs/baseline/`. The run prints that exact path. See `docs/BASELINE.md`.
@@ -80,11 +80,12 @@ On another laptop clone this repository and create a new .venv; do not copy .ven
 
 ## Next milestone
 
-Inspect baseline validation results, then add the first image-processing method.
+Run HSV Method 1 and compare with your saved baseline. See `docs/METHOD1_HSV.md`.
+Use the same dataset, validation split, feature extractor and model parameters.
 `docs/EXPERIMENT_AND_UI_PLAN.md` includes single-image, multi-image and folder input,
 comparison of five methods plus hybrid, and PNG/CSV exports. This UI is not built yet.
 
-The baseline was tested on Python 3.12.13/Linux. The user verified the starter's
+The baseline and HSV method were tested on Python 3.12.13/Linux. The user verified the starter's
 Python 3.12 Windows installation; rerun the tests after each update on Windows.
 
 ## Sources
