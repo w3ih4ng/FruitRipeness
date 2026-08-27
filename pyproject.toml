@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fruit-ripeness-study"
+version = "0.1.0"
+description = "Mode A multi-fruit image-processing comparison: dataset foundation"
+requires-python = ">=3.12,<3.13"
+dependencies = ["numpy==2.3.5", "Pillow==12.3.0"]
+
+[project.scripts]
+fruit-audit = "fruitripeness.audit:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
