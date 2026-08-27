@@ -1,8 +1,8 @@
 # Fruit Ripeness — Mode A
 
 One continuing VS Code/GitHub project for a five-method image-processing comparison
-and a team hybrid. This first milestone contains a working, read-only dataset audit,
-tests and an experiment/UI plan. It is NOT the completed classifier or UI.
+and a team hybrid. The dataset audit and baseline classifier are implemented.
+The five processing methods, hybrid and UI will be added incrementally.
 
 ## 1. Create the GitHub repository
 
@@ -34,28 +34,27 @@ another version without checking dependency compatibility.
 macOS/Linux equivalent: `python3.12 -m venv .venv`, then use `.venv/bin/python`
 in place of the Windows executable above.
 
-## 3. Place and audit your dataset
+## 3. Dataset and baseline
 
-Create `data/raw` and copy your supplied `archive.zip` into it. Keep the ZIP intact.
-Do not add dataset images to GitHub.
+Your extracted dataset should contain `data/raw/Train` and `data/raw/Test`.
+A single wrapper folder such as `data/raw/archive/Train` is accepted too. Keep
+source images/labels unchanged. No audit, cleaning or deduplication is required.
+
+After applying the baseline update, run:
 
 ```powershell
-.\.venv\Scripts\python.exe -m fruitripeness.audit --zip data/raw/archive.zip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m fruitripeness.baseline --data data/raw
 ```
 
-The audit decodes every image, records labels and dimensions, computes exact file
-and pixel hashes, and flags perceptually similar pairs. It writes:
+Expect 13 tests. The baseline fits on 3,547 images from original Train and validates
+on a fixed 887-image subset; the original 180-image Test set is unchanged and not
+scored by default. Results and a model go into a new timestamped folder under
+`outputs/baseline/`. The run prints that exact path. See `docs/BASELINE.md`.
 
-| Output | Purpose |
-|---|---|
-| outputs/audit/summary.json | Counts, dimensions and warnings |
-| outputs/audit/manifest.csv | One row per image, original path and normalised labels |
-| outputs/audit/duplicate_groups.json | Exact duplicates, cross-split and conflicting-label flags |
-| outputs/audit/near_duplicate_candidates.csv | Potential similar images requiring review |
-
-The audit does not extract, delete, relabel or modify your dataset. A nonzero exit
-status means invalid images were recorded, not that source files were altered.
-The initial audit is documented in `docs/DATASET_AUDIT.md`.
+The original read-only ZIP audit remains optional. Historical findings are recorded
+in `docs/DATASET_AUDIT.md`; they do not trigger image changes or block training.
 
 ## 4. Push this starter
 
@@ -81,10 +80,12 @@ On another laptop clone this repository and create a new .venv; do not copy .ven
 
 ## Next milestone
 
-Review dataset issues, then create one shared split and a baseline. See
-`docs/EXPERIMENT_AND_UI_PLAN.md` for the six-method UI and experimental plan.
-No results or models are supplied at this milestone. The dependency pins were tested
-with Python 3.12.13 on Linux; Windows setup must be verified on your machine.
+Inspect baseline validation results, then add the first image-processing method.
+`docs/EXPERIMENT_AND_UI_PLAN.md` includes single-image, multi-image and folder input,
+comparison of five methods plus hybrid, and PNG/CSV exports. This UI is not built yet.
+
+The baseline was tested on Python 3.12.13/Linux. The user verified the starter's
+Python 3.12 Windows installation; rerun the tests after each update on Windows.
 
 ## Sources
 

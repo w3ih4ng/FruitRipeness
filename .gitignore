@@ -10,6 +10,7 @@ dist/
 .env
 .env.*
 *.zip
+*.patch
 data/*
 !data/README.md
 outputs/*

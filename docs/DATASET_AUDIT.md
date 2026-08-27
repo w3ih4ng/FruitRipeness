@@ -1,5 +1,9 @@
 # Uploaded dataset audit
 
+**Current project decision:** retain the dataset unchanged, including duplicates and
+original labels/split. This historical audit documents limitations; its cleaning
+recommendations are not the adopted workflow and do not block baseline training.
+
 Audited file: `archive.zip`, supplied in this conversation. Date: 27 August 2026.
 Every image was decoded with Pillow. All paths and declared labels were checked.
 Exact duplicate detection used SHA-256 of both original bytes and EXIF-normalised

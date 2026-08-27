@@ -2,33 +2,31 @@
 
 ## Current status
 
-This starter implements the dataset audit only. Splitting, image-processing
-methods, feature extraction, training, inference and the comparison UI are not
-implemented yet. No placeholder predictions or invented performance metrics are included.
-Continue modifying this repository; do not generate replacement starter folders.
+Baseline training is implemented: minimally prepared RGB pixels (32 x 32) and a
+Random Forest. The audit is optional, not a prerequisite. Five processing methods,
+the hybrid and the UI remain future milestones. Continue editing this repository;
+no replacement starter folder is needed.
 
-## Dataset decisions before training
+## Confirmed dataset policy
 
-- Canonical stages: unripe, ripe, overripe. Map the original folder Overipe to
-  overripe in metadata only. Retain source paths and labels for traceability.
-- Keep fruit identity in the manifest. Do not infer maturity from the filename
-  or supply it as a predictor; filenames are label metadata only.
-- Manually review exact duplicates with contradictory labels. Quarantine unresolved
-  conflicts, rather than retaining a convenient label.
-- Perceptual hashes flag candidates, not proven duplicates. Review them before
-  making grouping or exclusion decisions. Repeated views of one specimen/scene
-  should stay together wherever that identity can be established.
-- Do not trust the original Train/Test split without leakage checks. Create one
-  versioned group-aware train/validation/test split after review. Aim for 70/15/15
-  by fruit and stage, allowing deviations to preserve groups. Report actual counts.
-- Keep all test data out of parameter selection and hybrid selection. A final
-  split must not be claimed leak-free solely because a hash check passes.
-- Audit all five fruits first; choose final coverage based on usable independent
-  groups and label clarity. More images of the same scene are not more independent
-  examples. Do not silently relabel mouldy fruit as merely overripe.
-- Scene-level labels do not provide per-object boxes or masks. A photo can contain
-  several fruits or mixed stages. First scope the application to one dominant fruit,
-  after review; mixed-stage scenes require exclusion or separate annotation.
+- Use the supplied dataset as it is. Retain every image, duplicate, original label
+  and original Train/Test membership. No cleaning, deduplication or relabelling.
+- The folder spelling Overipe maps to overripe in metadata only. Do not rename files.
+- Use the extracted Train and Test folders under data/raw. A single wrapper folder,
+  such as data/raw/archive/Train, is also supported automatically.
+- Reserve a reproducible 20% of original Train for validation (seed 42; stratify by
+  fruit and stage). This changes only metadata, not source files or supplied Test.
+- Current counts: 3,547 fitting images, 887 validation images, 180 original Test images.
+- Use validation while developing the methods/hybrid. Evaluate original Test only
+  after all choices are frozen. Duplicates can inflate scores, and conflicting
+  labels can distort scores. Acknowledge this limitation without blocking the work.
+- All methods must use the same split ID and image IDs. The saved split manifest
+  contains source paths, labels, content hashes and assigned experiment partitions.
+- Do not use names/labels as model features. This baseline predicts three ripeness
+  stages across five fruits; it does not independently recognise the fruit species.
+- Treat existing labels as image-level categories. Multi-fruit/mixed-stage scenes
+  remain in this experiment, but no per-object maturity or blemish ground truth
+  can be claimed from those labels alone.
 
 ## Controlled comparison
 
@@ -51,9 +49,12 @@ Provisional candidates to test on sample images before assigning members:
 These are candidates, not a confirmed final list. The uploaded images have varied
 backgrounds and multiple objects; preliminary trials may justify replacing a method.
 Use a raw/minimal-preprocessing baseline as a seventh EXPERIMENTAL reference; the
-requested UI still has five methods plus one hybrid. A Random Forest with shared
-colour and texture features is the provisional classifier. No deep detector should
-replace the fundamental image-processing contribution.
+requested UI still has five methods plus one hybrid. The initial fixed classifier
+is a 300-tree Random Forest with balanced class weights and seed 42, using flattened
+32 x 32 RGB pixels for every branch. This is minimal baseline preparation, not an
+enhancement technique. If the common feature extractor changes later, rerun the
+baseline and every method with that same extractor; never compare incompatible
+feature/model configurations as if preprocessing were the only difference.
 
 Compare macro F1, balanced accuracy, accuracy, per-stage precision/recall, per-fruit
 results and confusion matrices. Record preprocessing and prediction time separately
@@ -79,6 +80,20 @@ Choose the UI framework at the implementation milestone; no framework installed 
   missing predictions; missing model files must produce a clear not-trained state.
 - Use exactly the training-time preprocessing, dimensions and feature order.
 
+### Folder and batch view
+
+- Accept a single image, multiple selected images, or a folder of supported images.
+- Offer an explicit include-subfolders option; keep relative paths to distinguish
+  files with the same name. The source images must not be changed.
+- Apply the selected method, selected subset of methods, or all six consistently.
+- Show progress, successful/failed file counts and a per-image results table.
+- Handle unsupported files and per-image failures with visible messages; continue
+  other valid batch images without silently suppressing failures.
+- Show predicted ripeness, class scores and processing times. Do not invent true
+  labels for arbitrary uploads; accuracy/F1 require an explicit labelled dataset.
+- Export CSV predictions and PNG comparison images. Keep the destination outside
+  the source folder, and never overwrite inputs.
+
 ### Evaluation view
 
 - Load measured results from the fixed test manifest. Show model version, dataset
@@ -101,9 +116,9 @@ Choose the UI framework at the implementation milestone; no framework installed 
 
 ## Incremental milestones
 
-1. Create private GitHub repository, install starter, reproduce audit.
-2. Review duplicate/label problems, freeze cleaned manifest and shared split.
-3. Establish a measured baseline.
-4. Implement and test one member method at a time, reusing the same interfaces.
-5. Develop hybrid using validation evidence.
-6. Add six-method UI, test end-to-end inference and export real report figures.
+1. Private GitHub repository and Python environment: completed by the user.
+2. Run the baseline on the original extracted dataset and inspect validation outputs.
+3. Implement and test one member method at a time, using the same split/features/model.
+4. Develop the hybrid using validation evidence.
+5. Add single-image, multiple-image and folder UI workflows with comparison/export.
+6. Freeze choices, run final original-Test comparison and produce report figures.
