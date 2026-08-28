@@ -22,6 +22,7 @@ import PIL
 from PIL import Image, ImageOps
 import sklearn
 import scipy
+import cv2
 import threadpoolctl
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, balanced_accuracy_score, classification_report, confusion_matrix
@@ -117,6 +118,7 @@ def image_features(path: Path, expected_sha256: str | None = None, *, method: st
 def feature_matrix(root: Path, rows: list[dict], *, method: str = "baseline",
                    diagnostics: list | None = None) -> np.ndarray:
     features = np.empty((len(rows), 32*32*3), dtype=np.float32)
+    progress_every = 250 if method == "grabcut" else 1000
     for i,row in enumerate(rows):
         try:
             details = []
@@ -125,7 +127,7 @@ def feature_matrix(root: Path, rows: list[dict], *, method: str = "baseline",
                 diagnostics.append({"path": row["path"], **details[0]})
         except (OSError, ValueError, Image.DecompressionBombError) as exc:
             raise ValueError(f"Cannot process {row['path']}; no image was silently skipped: {exc}") from exc
-        if (i+1) % 1000 == 0:
+        if (i+1) % progress_every == 0:
             print(f"  Loaded {i+1}/{len(rows)} images", flush=True)
     return features
 
@@ -171,7 +173,7 @@ def evaluate(model, x: np.ndarray, rows: list[dict]) -> tuple[dict, list[dict]]:
 def predict_image(bundle: dict, path: Path) -> dict:
     """Inference helper for the later UI; path names never supply model features."""
     method = bundle.get("method")
-    if bundle.get("feature_id") != FEATURE_ID or method not in {"baseline", "hsv", "otsu", "kmeans"}:
+    if bundle.get("feature_id") != FEATURE_ID or method not in {"baseline", "hsv", "otsu", "kmeans", "grabcut"}:
         raise ValueError("Model feature/method version is incompatible")
     # Legacy baseline bundles did not store a processing_spec; their path is unchanged.
     if method != "baseline" or "processing_spec" in bundle:
@@ -245,7 +247,8 @@ def train_baseline(data: Path, out: Path, *, evaluate_test: bool = False,
         "training_feature_seconds": train_feature_seconds, "model_fit_seconds": fit_seconds,
         "versions": {"python": platform.python_version(), "numpy": np.__version__,
                      "Pillow": PIL.__version__, "scikit-learn": sklearn.__version__, "joblib": joblib.__version__,
-                     "scipy": scipy.__version__, "threadpoolctl": threadpoolctl.__version__},
+                     "scipy": scipy.__version__, "threadpoolctl": threadpoolctl.__version__,
+                     "opencv": cv2.__version__},
         "platform": platform.platform(),
         "limitations": ["Supplied duplicates and labels retained by project decision; scores can be inflated or distorted.",
                         "Validation is a fixed sample from supplied Train, not a cleaned or group-independent split.",
@@ -263,7 +266,8 @@ def train_baseline(data: Path, out: Path, *, evaluate_test: bool = False,
         write_csv(run/"processing_diagnostics.csv",diagnostics,
                   ["split","path","foreground_fraction","mask_status","processing_seconds",
                    "otsu_threshold","foreground_polarity","kmeans_clusters","kmeans_sample_pixels",
-                   "background_cluster","background_border_fraction","kmeans_iterations"])
+                   "background_cluster","background_border_fraction","kmeans_iterations",
+                   "grabcut_width","grabcut_height","grabcut_rect","grabcut_iterations","grabcut_status"])
     bundle = {"model": model,"method":method,"feature_id":FEATURE_ID,"split_id":split_id,
               "processing_spec":spec,"metadata":metadata}
     joblib.dump(bundle,run/"model.joblib",compress=3)

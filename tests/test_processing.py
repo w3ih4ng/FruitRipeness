@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import patch
 
 import joblib
+import cv2
 import numpy as np
 from PIL import Image, ImageDraw
 
@@ -18,6 +19,137 @@ from fruitripeness.processing import kmeans_candidate_mask, otsu_threshold, proc
 
 
 class ProcessingTests(unittest.TestCase):
+    def test_grabcut_dark_and_light_backgrounds_preserve_rgb_and_source(self):
+        for background in ['white','black']:
+            with self.subTest(background=background):
+                image=Image.new('RGB',(100,100),background)
+                draw=ImageDraw.Draw(image)
+                draw.ellipse((15,20,45,80),fill=(210,30,20))
+                draw.ellipse((55,20,85,80),fill=(20,180,50))
+                before=image.tobytes()
+                result=process_image(image,'grabcut')
+                self.assertTrue(result.mask[50,30])
+                self.assertTrue(result.mask[50,70])
+                self.assertFalse(result.mask[0,0])
+                self.assertEqual(result.details['grabcut_status'],'completed')
+                np.testing.assert_array_equal(np.asarray(result.processed)[result.mask],
+                                              np.asarray(image)[result.mask])
+                self.assertFalse(np.asarray(result.processed)[~result.mask].any())
+                self.assertEqual(image.tobytes(),before)
+
+    def test_grabcut_repeatable_after_other_rng_calls_and_restores_threads(self):
+        image=Image.new('RGB',(100,100),'white')
+        ImageDraw.Draw(image).ellipse((20,15,80,85),fill=(200,40,10))
+        previous_threads=cv2.getNumThreads()
+        first=process_image(image,'grabcut')
+        cv2.setRNGSeed(123)
+        cv2.randu(np.zeros((40,40),dtype=np.float32),0,1)
+        second=process_image(image,'grabcut')
+        self.assertTrue(first.mask.any())
+        np.testing.assert_array_equal(first.mask,second.mask)
+        self.assertEqual(first.details,second.details)
+        self.assertEqual(cv2.getNumThreads(),previous_threads)
+
+    def test_grabcut_bounded_working_size_restores_original_mask_alignment(self):
+        image=Image.new('RGB',(320,200),'white')
+        ImageDraw.Draw(image).ellipse((80,40,240,160),fill=(202,31,17))
+        result=process_image(image,'grabcut')
+        self.assertEqual((result.details['grabcut_width'],result.details['grabcut_height']),(160,100))
+        self.assertEqual(result.details['grabcut_rect'],'8,5,144,90')
+        self.assertEqual(result.mask.shape,(200,320))
+        self.assertEqual(result.processed.size,image.size)
+        self.assertTrue(result.mask[100,160])
+        self.assertFalse(result.mask[0,0])
+        np.testing.assert_array_equal(np.asarray(result.processed)[result.mask],
+                                      np.asarray(image)[result.mask])
+        small=process_image(image.resize((80,50)),'grabcut')
+        self.assertEqual((small.details['grabcut_width'],small.details['grabcut_height']),(80,50))
+
+    def test_grabcut_tiny_and_constant_images_are_flagged_not_dropped(self):
+        for size,status in [((1,1),'too_small'),((2,30),'too_small'),((4,4),'too_small'),
+                            ((30,1),'too_small'),((50,50),'constant_working_image')]:
+            with self.subTest(size=size),patch('fruitripeness.processing.cv2.grabCut') as grab:
+                result=process_image(Image.new('RGB',size,(120,30,20)),'grabcut')
+                self.assertEqual(result.details['grabcut_status'],status)
+                self.assertEqual(result.details['grabcut_iterations'],0)
+                self.assertEqual(result.details['mask_status'],'empty')
+                self.assertFalse(result.mask.any())
+                self.assertFalse(np.asarray(result.processed).any())
+                grab.assert_not_called()
+
+    def test_grabcut_empty_result_does_not_fall_back_to_original(self):
+        image=Image.new('RGB',(50,50),'white')
+        ImageDraw.Draw(image).rectangle((10,10,39,39),fill='red')
+        # A valid graph-cut result can classify everything as background. Leave
+        # the zero-initialised output labels unchanged to exercise that outcome.
+        with patch('fruitripeness.processing.cv2.grabCut') as grab:
+            result=process_image(image,'grabcut')
+        grab.assert_called_once()
+        self.assertEqual(result.details['grabcut_status'],'empty_result')
+        self.assertEqual(result.details['grabcut_iterations'],5)
+        self.assertEqual(result.details['mask_status'],'empty')
+        self.assertFalse(np.asarray(result.processed).any())
+        self.assertEqual(result.original.tobytes(),image.tobytes())
+
+    def test_grabcut_unexpected_error_is_reported_and_threads_restored(self):
+        image=Image.new('RGB',(50,50),'white')
+        ImageDraw.Draw(image).rectangle((10,10,39,39),fill='red')
+        previous_threads=cv2.getNumThreads()
+        with patch('fruitripeness.processing.cv2.grabCut',side_effect=cv2.error('simulated failure')):
+            with self.assertRaisesRegex(ValueError,'GrabCut failed'):
+                process_image(image,'grabcut')
+        self.assertEqual(cv2.getNumThreads(),previous_threads)
+
+    def test_grabcut_settings_and_runtime_version_mismatch_are_rejected(self):
+        spec=processing_spec('grabcut');spec['background_rgb'][0]=255
+        self.assertEqual(processing_spec('grabcut')['background_rgb'],[0,0,0])
+        with self.assertRaisesRegex(ValueError,'settings differ'):
+            predict_image({'method':'grabcut','feature_id':'rgb_pixels_32x32_v1',
+                           'processing_spec':spec},Path('unused.png'))
+        with patch('fruitripeness.processing.cv2.__version__','other'):
+            with self.assertRaisesRegex(ValueError,'OpenCV version differs'):
+                process_image(Image.new('RGB',(50,50)),'grabcut')
+
+    def test_grabcut_end_to_end_exports_features_and_saved_model_agree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/'data';make_dataset(root)
+            for path in root.rglob('*.png'):
+                with Image.open(path) as source:
+                    colour=source.getpixel((0,0))
+                image=Image.new('RGB',(40,40),'white')
+                ImageDraw.Draw(image).rectangle((8,8,31,31),fill=colour)
+                image.save(path)
+            with redirect_stdout(io.StringIO()):
+                baseline,_=train_baseline(root,Path(tmp)/'baseline',jobs=1,trees=8)
+                with patch('fruitripeness.baseline.process_image',wraps=process_image) as process:
+                    run,metrics=train_baseline(root,Path(tmp)/'grabcut',jobs=1,trees=8,method='grabcut')
+                self.assertEqual(process.call_count,36)  # Original Test never processed.
+            comparison=compare_runs(baseline,run)
+            self.assertEqual(comparison['grabcut']['accuracy'],metrics['validation']['accuracy'])
+            self.assertAlmostEqual(comparison['grabcut_minus_baseline']['accuracy'],
+                                   comparison['grabcut']['accuracy']-comparison['baseline']['accuracy'])
+            with (run/'processing_diagnostics.csv').open(newline='') as f:
+                diagnostics=list(csv.DictReader(f))
+            self.assertEqual(len(diagnostics),36)
+            self.assertNotIn('test',{r['split'] for r in diagnostics})
+            self.assertTrue(all(r['grabcut_status']=='completed' for r in diagnostics))
+            self.assertTrue(all(r['grabcut_rect']=='2,2,36,36' for r in diagnostics))
+            n=export_previews(root,run)
+            self.assertGreaterEqual(n,6)
+            with Image.open(next((run/'previews').glob('*.png'))) as preview:
+                self.assertEqual(preview.size,(1000,460))
+            with (run/'predictions_validation.csv').open(newline='') as f:
+                row=next(csv.DictReader(f))
+            path=root/row['path']
+            with Image.open(path) as source:
+                manual=feature_vector(process_image(source,'grabcut').processed)
+            np.testing.assert_array_equal(manual,image_features(path,method='grabcut'))
+            bundle=joblib.load(run/'model.joblib')  # Our own model only.
+            predicted=predict_image(bundle,path)
+            self.assertEqual(predicted['predicted_stage'],row['predicted_stage'])
+            for c,score in predicted['scores'].items():
+                self.assertAlmostEqual(score,float(row['score_'+c]))
+
     def test_kmeans_retains_multiple_colours_and_preserves_original_rgb(self):
         for background in ['white', 'black']:
             with self.subTest(background=background):

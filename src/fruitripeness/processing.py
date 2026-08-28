@@ -4,7 +4,9 @@ These methods are foreground heuristics, not verified fruit detectors.
 Ripeness labels and fruit names must never be passed to this module.
 """
 from dataclasses import dataclass
+from threading import Lock
 
+import cv2
 import numpy as np
 from PIL import Image, ImageOps
 from scipy import ndimage
@@ -71,6 +73,33 @@ KMEANS_SPEC = {
     "working_size": "original image resolution; dataset images are 300x300",
 }
 
+GRABCUT_SPEC = {
+    "version": "grabcut_auto_rect_v1",
+    "opencv_version": "4.13.0",
+    "initialisation": "GC_INIT_WITH_RECT; outer margin is definite background",
+    "max_working_side": 160,
+    "image_resize": "preserve aspect ratio, round dimensions, Pillow BILINEAR; never upscale",
+    "border_fraction": 0.05,
+    "margin_rule": "round fraction of each working dimension; minimum one pixel",
+    "iterations": 5,
+    "random_seed": 42,
+    "opencv_threads": 1,
+    "mask_resize": "Pillow NEAREST to original dimensions, then shared cleanup",
+    "small_image_policy": "empty mask if either initial class has fewer than five pixels",
+    "constant_image_policy": "empty mask if working image has one RGB colour",
+    "opening_kernel": 3,
+    "closing_kernel": 5,
+    "min_component_fraction": 0.005,
+    "min_component_pixels": 16,
+    "fill_enclosed_holes": True,
+    "background_rgb": [0, 0, 0],
+    "empty_mask_policy": "black image, flag for review, no image exclusion",
+    "working_size": "GrabCut at max side 160; cleanup and RGB masking at original resolution",
+}
+
+# Guard OpenCV's seed/thread configuration for concurrent calls through this wrapper.
+_GRABCUT_LOCK = Lock()
+
 
 def processing_spec(method: str) -> dict:
     if method == "baseline":
@@ -82,6 +111,8 @@ def processing_spec(method: str) -> dict:
         return {**OTSU_SPEC, "background_rgb": list(OTSU_SPEC["background_rgb"])}
     if method == "kmeans":
         return {**KMEANS_SPEC, "background_rgb": list(KMEANS_SPEC["background_rgb"])}
+    if method == "grabcut":
+        return {**GRABCUT_SPEC, "background_rgb": list(GRABCUT_SPEC["background_rgb"])}
     raise ValueError(f"Unsupported method: {method}")
 
 
@@ -189,6 +220,59 @@ def kmeans_candidate_mask(rgb: Image.Image, spec: dict) -> tuple[np.ndarray, dic
     }
 
 
+def grabcut_candidate_mask(rgb: Image.Image, spec: dict) -> tuple[np.ndarray, dict]:
+    """Automatic rectangle initialisation; no hand-drawn masks or labels.
+
+    The working-size limit bounds graph construction for future folder input.
+    Only the binary mask is enlarged; retained RGB values come from the original.
+    Empty and too-small cases remain in the dataset with explicit diagnostics.
+    Unexpected OpenCV errors stop the experiment rather than dropping an image.
+    """
+    if cv2.__version__ != spec["opencv_version"]:
+        raise ValueError("GrabCut OpenCV version differs; install the project's pinned requirements")
+    scale = min(1.0, spec["max_working_side"] / max(rgb.size))
+    width, height = (max(1, int(round(d*scale))) for d in rgb.size)
+    working = rgb.resize((width, height), Image.Resampling.BILINEAR)
+    pixels = np.asarray(working, dtype=np.uint8)
+    mx = max(1, int(round(width*spec["border_fraction"])))
+    my = max(1, int(round(height*spec["border_fraction"])))
+    rw, rh = max(0, width-2*mx), max(0, height-2*my)
+    details = {
+        "grabcut_width": width, "grabcut_height": height,
+        "grabcut_rect": f"{mx},{my},{rw},{rh}", "grabcut_iterations": 0,
+    }
+    if rw*rh < 5 or width*height-rw*rh < 5:
+        return np.zeros((rgb.height, rgb.width), dtype=bool), {
+            **details, "grabcut_status": "too_small",
+        }
+    if np.all(pixels == pixels[0, 0]):
+        return np.zeros((rgb.height, rgb.width), dtype=bool), {
+            **details, "grabcut_status": "constant_working_image",
+        }
+    # OpenCV accepts BGR uint8. Never pass its recoloured/clustered values onward.
+    bgr = np.ascontiguousarray(pixels[:, :, ::-1])
+    labels = np.zeros((height, width), dtype=np.uint8)
+    background_model = np.zeros((1, 65), dtype=np.float64)
+    foreground_model = np.zeros((1, 65), dtype=np.float64)
+    with _GRABCUT_LOCK:
+        previous_threads = cv2.getNumThreads()
+        try:
+            cv2.setNumThreads(spec["opencv_threads"])
+            cv2.setRNGSeed(spec["random_seed"])
+            cv2.grabCut(bgr, labels, (mx, my, rw, rh), background_model,
+                        foreground_model, spec["iterations"], cv2.GC_INIT_WITH_RECT)
+        except cv2.error as exc:
+            raise ValueError(f"GrabCut failed for {width}x{height} working image: {exc}") from exc
+        finally:
+            cv2.setNumThreads(previous_threads)
+    mask = (labels == cv2.GC_FGD) | (labels == cv2.GC_PR_FGD)
+    enlarged = Image.fromarray(mask.astype(np.uint8)*255).resize(rgb.size, Image.Resampling.NEAREST)
+    return np.asarray(enlarged) > 0, {
+        **details, "grabcut_iterations": spec["iterations"],
+        "grabcut_status": "completed" if mask.any() else "empty_result",
+    }
+
+
 def process_image(image: Image.Image, method: str) -> ProcessingResult:
     spec = processing_spec(method)
     rgb = ImageOps.exif_transpose(image).convert("RGB")
@@ -202,8 +286,10 @@ def process_image(image: Image.Image, method: str) -> ProcessingResult:
         mask = (hsv[:, :, 1] >= spec["saturation_min"]) & (hsv[:, :, 2] >= spec["value_min"])
     elif method == "otsu":
         mask, details = otsu_candidate_mask(rgb, spec)
-    else:
+    elif method == "kmeans":
         mask, details = kmeans_candidate_mask(rgb, spec)
+    else:
+        mask, details = grabcut_candidate_mask(rgb, spec)
     # Edge padding prevents artificial black rims on fully coloured images.
     pad = spec["closing_kernel"]
     padded = np.pad(mask, pad, mode="edge")

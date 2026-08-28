@@ -14,7 +14,8 @@ from .audit import write_csv
 from .baseline import assign_splits, collect_records, resolve_dataset_root, train_baseline
 from .processing import process_image, processing_spec
 
-METHOD_LABELS = {"hsv": "Method 1 - HSV", "otsu": "Method 2 - Otsu", "kmeans": "Method 3 - K-means"}
+METHOD_LABELS = {"hsv": "Method 1 - HSV", "otsu": "Method 2 - Otsu", "kmeans": "Method 3 - K-means",
+                 "grabcut": "Method 4 - GrabCut"}
 
 
 def read_run(path: Path) -> tuple[dict, dict]:
@@ -90,6 +91,9 @@ def render_preview(image: Image.Image, title: str, footer: str, *, method: str =
         status += f" | Threshold: {result.details['otsu_threshold']} | Keep: {result.details['foreground_polarity']}"
     elif method == "kmeans":
         status += f" | Clusters: {result.details['kmeans_clusters']} | Background ID: {result.details['background_cluster']}"
+    elif method == "grabcut":
+        status += (f" | Working: {result.details['grabcut_width']}x{result.details['grabcut_height']}"
+                   f" | GrabCut: {result.details['grabcut_status']}")
     draw.text((20, 393), status, fill="black", font=small)
     for i, line in enumerate(textwrap.wrap(footer, width=105)[:2]):
         draw.text((20, 418+i*18), line, fill="black", font=small)

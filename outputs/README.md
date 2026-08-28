@@ -25,3 +25,8 @@ Its diagnostics add the effective cluster count, sampled pixel count, background
 cluster ID, background share of the frame and fit iterations. Preview PNGs show
 the cluster count and selected background ID. These IDs are colour groups, not
 ripeness classes. See docs/METHOD3_KMEANS.md for the fixed processing rules.
+
+GrabCut Method 4 uses outputs/grabcut/<run timestamp>/ with the same layout.
+Diagnostics record working dimensions, automatic rectangle, requested iteration
+count and GrabCut status. The final mask fraction/status is recorded separately
+after resizing and cleanup. See docs/METHOD4_GRABCUT.md for the exact rules.
