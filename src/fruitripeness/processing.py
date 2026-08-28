@@ -97,6 +97,36 @@ GRABCUT_SPEC = {
     "working_size": "GrabCut at max side 160; cleanup and RGB masking at original resolution",
 }
 
+WATERSHED_SPEC = {
+    "version": "watershed_otsu_distance_markers_v1",
+    "opencv_version": "4.13.0",
+    "coarse_mask_version": "otsu_gray_border_v1",
+    "border_fraction": 0.05,
+    "max_working_side": 300,
+    "image_resize": "preserve aspect ratio, round dimensions, Pillow BILINEAR; never upscale",
+    "marker_opening_kernel": 3,
+    "background_frame_fraction": 0.02,
+    "background_frame_min_pixels": 2,
+    "background_dilation_kernel": 3,
+    "background_dilation_iterations": 3,
+    "distance_transform": "SciPy exact Euclidean distance inside coarse foreground",
+    "foreground_core_fraction": 0.50,
+    "core_rule": "distance >= fraction of each coarse component's own maximum",
+    "marker_labels": "0 unknown, 1 background, 2+ foreground cores; 8-connected cores",
+    "watershed_input": "unblurred working BGR uint8; OpenCV colour-difference watershed",
+    "boundary_policy": "exclude label -1 before shared cleanup; union foreground labels > 1",
+    "mask_resize": "Pillow NEAREST to original dimensions, then shared cleanup",
+    "small_image_policy": "empty mask if either working dimension is below five pixels",
+    "opening_kernel": 3,
+    "closing_kernel": 5,
+    "min_component_fraction": 0.005,
+    "min_component_pixels": 16,
+    "fill_enclosed_holes": True,
+    "background_rgb": [0, 0, 0],
+    "empty_mask_policy": "black image, flag for review, no image exclusion",
+    "working_size": "watershed at max side 300; cleanup and RGB masking at original resolution",
+}
+
 # Guard OpenCV's seed/thread configuration for concurrent calls through this wrapper.
 _GRABCUT_LOCK = Lock()
 
@@ -113,6 +143,8 @@ def processing_spec(method: str) -> dict:
         return {**KMEANS_SPEC, "background_rgb": list(KMEANS_SPEC["background_rgb"])}
     if method == "grabcut":
         return {**GRABCUT_SPEC, "background_rgb": list(GRABCUT_SPEC["background_rgb"])}
+    if method == "watershed":
+        return {**WATERSHED_SPEC, "background_rgb": list(WATERSHED_SPEC["background_rgb"])}
     raise ValueError(f"Unsupported method: {method}")
 
 
@@ -122,6 +154,8 @@ class ProcessingResult:
     processed: Image.Image
     mask: np.ndarray
     details: dict
+    # Optional INITIAL marker labels at working resolution; never classification labels.
+    markers: np.ndarray | None = None
 
 
 def otsu_threshold(gray: np.ndarray) -> int | None:
@@ -273,6 +307,76 @@ def grabcut_candidate_mask(rgb: Image.Image, spec: dict) -> tuple[np.ndarray, di
     }
 
 
+def watershed_candidate_mask(rgb: Image.Image, spec: dict) -> tuple[np.ndarray, dict, np.ndarray]:
+    """Otsu-derived distance markers followed by colour-boundary flooding.
+
+    Returns the candidate mask, scalar diagnostics, and initial marker labels for
+    report previews. Marker counts are not fruit counts. No true labels are used.
+    """
+    if cv2.__version__ != spec["opencv_version"]:
+        raise ValueError("Watershed OpenCV version differs; install the project's pinned requirements")
+    scale = min(1.0, spec["max_working_side"] / max(rgb.size))
+    width, height = (max(1, int(round(d*scale))) for d in rgb.size)
+    working = rgb.resize((width, height), Image.Resampling.BILINEAR)
+    markers = np.zeros((height, width), dtype=np.int32)
+    empty = np.zeros((rgb.height, rgb.width), dtype=bool)
+    details = {
+        "watershed_width": width, "watershed_height": height,
+        "watershed_markers": 0, "watershed_seed_fraction": 0.0,
+        "watershed_background_fraction": 0.0, "watershed_boundary_fraction": 0.0,
+        "otsu_threshold": None, "foreground_polarity": "none",
+    }
+    if min(width, height) < 5:
+        return empty, {**details, "watershed_status": "too_small"}, markers
+    coarse, threshold_details = otsu_candidate_mask(working, spec)
+    details.update(threshold_details)
+    kernel = spec["marker_opening_kernel"]
+    padded = np.pad(coarse, kernel, mode="edge")
+    padded = ndimage.binary_opening(padded, structure=np.ones((kernel, kernel), dtype=bool))
+    coarse = padded[kernel:-kernel, kernel:-kernel]
+    # A two-pixel minimum frame leaves background seeds inside OpenCV's outer
+    # one-pixel boundary, which watershed always replaces with label -1.
+    frame = max(spec["background_frame_min_pixels"],
+                int(round(min(width, height)*spec["background_frame_fraction"])))
+    border = np.zeros((height, width), dtype=bool)
+    border[:frame, :] = border[-frame:, :] = True
+    border[:, :frame] = border[:, -frame:] = True
+    coarse[border] = False
+    components, _ = ndimage.label(coarse, structure=np.ones((3, 3), dtype=bool))
+    sizes = np.bincount(components.ravel())
+    keep = sizes >= max(spec["min_component_pixels"], int(np.ceil(coarse.size*spec["min_component_fraction"])))
+    keep[0] = False
+    coarse = keep[components]
+    if not coarse.any():
+        return empty, {**details, "watershed_status": "no_coarse_foreground"}, markers
+    components, count = ndimage.label(coarse, structure=np.ones((3, 3), dtype=bool))
+    distance = ndimage.distance_transform_edt(coarse)
+    maxima = ndimage.maximum(distance, labels=components, index=np.arange(count+1))
+    cores = coarse & (distance >= spec["foreground_core_fraction"]*maxima[components])
+    core_labels, n_cores = ndimage.label(cores, structure=np.ones((3, 3), dtype=bool))
+    dilation = spec["background_dilation_kernel"]
+    expanded = ndimage.binary_dilation(coarse, structure=np.ones((dilation, dilation), dtype=bool),
+                                      iterations=spec["background_dilation_iterations"])
+    background = ~expanded | border
+    markers[background] = 1
+    markers[cores] = core_labels[cores] + 1
+    initial = markers.copy()  # OpenCV mutates the array passed to watershed.
+    details.update({"watershed_markers": int(n_cores),
+                    "watershed_seed_fraction": float(cores.mean()),
+                    "watershed_background_fraction": float(background.mean())})
+    bgr = np.ascontiguousarray(np.asarray(working, dtype=np.uint8)[:, :, ::-1])
+    try:
+        cv2.watershed(bgr, markers)
+    except cv2.error as exc:
+        raise ValueError(f"Watershed failed for {width}x{height} working image: {exc}") from exc
+    mask = markers > 1
+    enlarged = Image.fromarray(mask.astype(np.uint8)*255).resize(rgb.size, Image.Resampling.NEAREST)
+    return np.asarray(enlarged) > 0, {
+        **details, "watershed_boundary_fraction": float((markers == -1).mean()),
+        "watershed_status": "completed" if mask.any() else "empty_result",
+    }, initial
+
+
 def process_image(image: Image.Image, method: str) -> ProcessingResult:
     spec = processing_spec(method)
     rgb = ImageOps.exif_transpose(image).convert("RGB")
@@ -281,6 +385,7 @@ def process_image(image: Image.Image, method: str) -> ProcessingResult:
         return ProcessingResult(rgb, rgb.copy(), mask,
                                 {"foreground_fraction": 1.0, "mask_status": "not_segmented"})
     details = {}
+    markers = None
     if method == "hsv":
         hsv = np.asarray(rgb.convert("HSV"), dtype=np.float32) / 255.0
         mask = (hsv[:, :, 1] >= spec["saturation_min"]) & (hsv[:, :, 2] >= spec["value_min"])
@@ -288,8 +393,10 @@ def process_image(image: Image.Image, method: str) -> ProcessingResult:
         mask, details = otsu_candidate_mask(rgb, spec)
     elif method == "kmeans":
         mask, details = kmeans_candidate_mask(rgb, spec)
-    else:
+    elif method == "grabcut":
         mask, details = grabcut_candidate_mask(rgb, spec)
+    else:
+        mask, details, markers = watershed_candidate_mask(rgb, spec)
     # Edge padding prevents artificial black rims on fully coloured images.
     pad = spec["closing_kernel"]
     padded = np.pad(mask, pad, mode="edge")
@@ -310,4 +417,4 @@ def process_image(image: Image.Image, method: str) -> ProcessingResult:
     fraction = float(mask.mean())
     status = "empty" if fraction == 0 else "near_full" if fraction > 0.98 else "nonempty"
     return ProcessingResult(rgb, Image.fromarray(pixels), mask,
-                            {"foreground_fraction": fraction, "mask_status": status, **details})
+                            {"foreground_fraction": fraction, "mask_status": status, **details}, markers=markers)

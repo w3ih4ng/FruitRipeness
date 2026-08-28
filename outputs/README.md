@@ -30,3 +30,9 @@ GrabCut Method 4 uses outputs/grabcut/<run timestamp>/ with the same layout.
 Diagnostics record working dimensions, automatic rectangle, requested iteration
 count and GrabCut status. The final mask fraction/status is recorded separately
 after resizing and cleanup. See docs/METHOD4_GRABCUT.md for the exact rules.
+
+Watershed Method 5 uses outputs/watershed/<run timestamp>/ with the same layout.
+It adds initial-marker count, seed/background coverage, working dimensions and
+watershed boundary/status diagnostics. Its 1330 x 460 previews contain four panels:
+original, actual initial markers, final mask and processed RGB. Earlier methods'
+1000 x 460 previews are unchanged. See docs/METHOD5_WATERSHED.md for the fixed rules.

@@ -19,6 +19,138 @@ from fruitripeness.processing import kmeans_candidate_mask, otsu_threshold, proc
 
 
 class ProcessingTests(unittest.TestCase):
+    def test_watershed_dark_and_light_backgrounds_preserve_rgb_and_source(self):
+        for background in ['white','black']:
+            with self.subTest(background=background):
+                image=Image.new('RGB',(100,100),background)
+                ImageDraw.Draw(image).ellipse((20,15,80,85),fill=(205,35,20))
+                before=image.tobytes()
+                result=process_image(image,'watershed')
+                repeat=process_image(image,'watershed')
+                self.assertTrue(result.mask[50,50])
+                self.assertFalse(result.mask[0,0])
+                self.assertEqual(result.details['watershed_status'],'completed')
+                np.testing.assert_array_equal(np.asarray(result.processed)[result.mask],np.asarray(image)[result.mask])
+                self.assertFalse(np.asarray(result.processed)[~result.mask].any())
+                self.assertEqual(image.tobytes(),before)
+                np.testing.assert_array_equal(result.mask,repeat.mask)
+                np.testing.assert_array_equal(result.markers,repeat.markers)
+                self.assertEqual(result.details,repeat.details)
+
+    def test_watershed_per_component_cores_keep_smaller_object_and_initial_markers(self):
+        image=Image.new('RGB',(160,120),'white')
+        draw=ImageDraw.Draw(image)
+        draw.ellipse((15,15,95,105),fill=(210,30,20))
+        draw.rectangle((120,45,140,65),fill=(20,180,50))
+        result=process_image(image,'watershed')
+        large,small=result.markers[60,55],result.markers[55,130]
+        self.assertGreater(large,1)
+        self.assertGreater(small,1)
+        self.assertNotEqual(large,small)
+        self.assertTrue(result.mask[60,55])
+        self.assertTrue(result.mask[55,130])
+        self.assertGreaterEqual(result.details['watershed_markers'],2)
+        self.assertTrue(np.any(result.markers==0))  # Unknown transition band.
+        self.assertEqual(result.markers[1,1],1)  # BG seed survives inside OpenCV's outer boundary.
+        self.assertFalse(np.any(result.markers<0))  # INITIAL markers weren't mutated by OpenCV.
+        self.assertGreater(result.details['watershed_boundary_fraction'],0)
+        preview=render_preview(image,'Method 5 - Watershed','sample.png',method='watershed')
+        self.assertEqual(preview.size,(1330,460))
+        self.assertTrue(np.any(np.all(np.asarray(preview)==(0,110,220),axis=2)))
+
+    def test_watershed_tiny_and_constant_images_are_flagged_not_dropped(self):
+        for size,status in [((1,1),'too_small'),((4,30),'too_small'),((30,1),'too_small'),
+                            ((50,50),'no_coarse_foreground')]:
+            with self.subTest(size=size),patch('fruitripeness.processing.cv2.watershed') as watershed:
+                result=process_image(Image.new('RGB',size,(120,30,20)),'watershed')
+                self.assertEqual(result.details['watershed_status'],status)
+                self.assertEqual(result.details['watershed_markers'],0)
+                self.assertEqual(result.details['mask_status'],'empty')
+                self.assertFalse(np.asarray(result.processed).any())
+                self.assertFalse(result.markers.any())
+                watershed.assert_not_called()
+
+    def test_watershed_size_cap_restores_mask_to_original_rgb(self):
+        image=Image.new('RGB',(600,400),'white')
+        ImageDraw.Draw(image).ellipse((150,80,450,320),fill=(203,41,19))
+        result=process_image(image,'watershed')
+        self.assertEqual((result.details['watershed_width'],result.details['watershed_height']),(300,200))
+        self.assertEqual(result.markers.shape,(200,300))
+        self.assertEqual(result.mask.shape,(400,600))
+        self.assertEqual(result.processed.size,image.size)
+        self.assertTrue(result.mask[200,300])
+        np.testing.assert_array_equal(np.asarray(result.processed)[result.mask],np.asarray(image)[result.mask])
+
+    def test_watershed_settings_and_runtime_version_mismatch_are_rejected(self):
+        spec=processing_spec('watershed');spec['background_rgb'][0]=255
+        self.assertEqual(processing_spec('watershed')['background_rgb'],[0,0,0])
+        with self.assertRaisesRegex(ValueError,'settings differ'):
+            predict_image({'method':'watershed','feature_id':'rgb_pixels_32x32_v1',
+                           'processing_spec':spec},Path('unused.png'))
+        with patch('fruitripeness.processing.cv2.__version__','other'):
+            with self.assertRaisesRegex(ValueError,'OpenCV version differs'):
+                process_image(Image.new('RGB',(50,50)),'watershed')
+
+    def test_watershed_empty_result_never_falls_back_to_original(self):
+        image=Image.new('RGB',(50,50),'white')
+        ImageDraw.Draw(image).rectangle((10,10,39,39),fill='red')
+        def all_background(bgr,markers):
+            markers[:]=1
+        with patch('fruitripeness.processing.cv2.watershed',side_effect=all_background):
+            result=process_image(image,'watershed')
+        self.assertEqual(result.details['watershed_status'],'empty_result')
+        self.assertEqual(result.details['mask_status'],'empty')
+        self.assertFalse(np.asarray(result.processed).any())
+        self.assertTrue(np.any(result.markers>1))  # Saved starting markers remain intact.
+
+    def test_watershed_unexpected_error_is_reported(self):
+        image=Image.new('RGB',(50,50),'white')
+        ImageDraw.Draw(image).rectangle((10,10,39,39),fill='red')
+        with patch('fruitripeness.processing.cv2.watershed',side_effect=cv2.error('simulated failure')):
+            with self.assertRaisesRegex(ValueError,'Watershed failed'):
+                process_image(image,'watershed')
+
+    def test_watershed_end_to_end_exports_features_and_saved_model_agree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/'data';make_dataset(root)
+            for path in root.rglob('*.png'):
+                with Image.open(path) as source:
+                    colour=source.getpixel((0,0))
+                image=Image.new('RGB',(40,40),'white')
+                ImageDraw.Draw(image).rectangle((8,8,31,31),fill=colour)
+                image.save(path)
+            with redirect_stdout(io.StringIO()):
+                baseline,_=train_baseline(root,Path(tmp)/'baseline',jobs=1,trees=8)
+                with patch('fruitripeness.baseline.process_image',wraps=process_image) as process:
+                    run,metrics=train_baseline(root,Path(tmp)/'watershed',jobs=1,trees=8,method='watershed')
+                self.assertEqual(process.call_count,36)
+            comparison=compare_runs(baseline,run)
+            self.assertEqual(comparison['watershed']['accuracy'],metrics['validation']['accuracy'])
+            self.assertAlmostEqual(comparison['watershed_minus_baseline']['accuracy'],
+                                   comparison['watershed']['accuracy']-comparison['baseline']['accuracy'])
+            with (run/'processing_diagnostics.csv').open(newline='') as f:
+                diagnostics=list(csv.DictReader(f))
+            self.assertEqual(len(diagnostics),36)
+            self.assertNotIn('test',{r['split'] for r in diagnostics})
+            self.assertTrue(all(r['watershed_status']=='completed' for r in diagnostics))
+            self.assertTrue(all(int(r['watershed_markers'])>=1 for r in diagnostics))
+            self.assertTrue(all(r['otsu_threshold'] for r in diagnostics))
+            n=export_previews(root,run)
+            self.assertGreaterEqual(n,6)
+            with Image.open(next((run/'previews').glob('*.png'))) as preview:
+                self.assertEqual(preview.size,(1330,460))
+            with (run/'predictions_validation.csv').open(newline='') as f:
+                row=next(csv.DictReader(f))
+            path=root/row['path']
+            with Image.open(path) as source:
+                manual=feature_vector(process_image(source,'watershed').processed)
+            np.testing.assert_array_equal(manual,image_features(path,method='watershed'))
+            bundle=joblib.load(run/'model.joblib')
+            predicted=predict_image(bundle,path)
+            self.assertEqual(predicted['predicted_stage'],row['predicted_stage'])
+            for c,score in predicted['scores'].items():
+                self.assertAlmostEqual(score,float(row['score_'+c]))
+
     def test_grabcut_dark_and_light_backgrounds_preserve_rgb_and_source(self):
         for background in ['white','black']:
             with self.subTest(background=background):

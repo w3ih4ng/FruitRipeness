@@ -9,13 +9,14 @@ from pathlib import Path
 import textwrap
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
+import numpy as np
 
 from .audit import write_csv
 from .baseline import assign_splits, collect_records, resolve_dataset_root, train_baseline
 from .processing import process_image, processing_spec
 
 METHOD_LABELS = {"hsv": "Method 1 - HSV", "otsu": "Method 2 - Otsu", "kmeans": "Method 3 - K-means",
-                 "grabcut": "Method 4 - GrabCut"}
+                 "grabcut": "Method 4 - GrabCut", "watershed": "Method 5 - Watershed"}
 
 
 def read_run(path: Path) -> tuple[dict, dict]:
@@ -72,7 +73,7 @@ def compare_runs(baseline_run: Path, method_run: Path) -> dict:
 
 def render_preview(image: Image.Image, title: str, footer: str, *, method: str = "hsv") -> Image.Image:
     result = process_image(image, method)
-    canvas = Image.new("RGB", (1000, 460), "white")
+    canvas = Image.new("RGB", (1330 if method == "watershed" else 1000, 460), "white")
     draw = ImageDraw.Draw(canvas)
     font = ImageFont.load_default(size=18)
     small = ImageFont.load_default(size=15)
@@ -80,6 +81,12 @@ def render_preview(image: Image.Image, title: str, footer: str, *, method: str =
     panels = [("Original", result.original),
               (f"{method.upper()} foreground mask", Image.fromarray(result.mask.astype("uint8")*255)),
               ("Processed input", result.processed)]
+    if method == "watershed":
+        # These are the actual initial markers, not a reconstruction from the final mask.
+        colours = np.full((*result.markers.shape, 3), 160, dtype=np.uint8)
+        colours[result.markers == 1] = (0, 0, 0)
+        colours[result.markers > 1] = (0, 110, 220)
+        panels.insert(1, ("Initial markers", Image.fromarray(colours)))
     for i, (caption, panel) in enumerate(panels):
         x = 20+i*330
         draw.text((x, 48), caption, fill="black", font=font)
@@ -94,8 +101,11 @@ def render_preview(image: Image.Image, title: str, footer: str, *, method: str =
     elif method == "grabcut":
         status += (f" | Working: {result.details['grabcut_width']}x{result.details['grabcut_height']}"
                    f" | GrabCut: {result.details['grabcut_status']}")
+    elif method == "watershed":
+        status += (f" | Seeds: {result.details['watershed_markers']} | {result.details['watershed_status']}"
+                   " | Markers: blue=foreground, black=background, grey=unknown")
     draw.text((20, 393), status, fill="black", font=small)
-    for i, line in enumerate(textwrap.wrap(footer, width=105)[:2]):
+    for i, line in enumerate(textwrap.wrap(footer, width=140 if method == "watershed" else 105)[:2]):
         draw.text((20, 418+i*18), line, fill="black", font=small)
     return canvas
 
