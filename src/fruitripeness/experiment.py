@@ -17,7 +17,8 @@ from .processing import process_image, processing_spec
 
 METHOD_LABELS = {"hsv": "Method 1 - HSV", "otsu": "Method 2 - Otsu", "kmeans": "Method 3 - K-means",
                  "grabcut": "Method 4 - GrabCut", "watershed": "Method 5 - Watershed",
-                 "hybrid": "Hybrid - HSV + GrabCut Union"}
+                 "hybrid": "Hybrid - HSV + GrabCut Union",
+                 "hybrid_refined": "Hybrid refined - HSV-seeded GrabCut"}
 
 
 def read_run(path: Path) -> tuple[dict, dict]:
@@ -74,7 +75,7 @@ def compare_runs(baseline_run: Path, method_run: Path) -> dict:
 
 def render_preview(image: Image.Image, title: str, footer: str, *, method: str = "hsv") -> Image.Image:
     result = process_image(image, method)
-    canvas = Image.new("RGB", ({"watershed": 1330, "hybrid": 1660}.get(method, 1000), 460), "white")
+    canvas = Image.new("RGB", ({"watershed": 1330, "hybrid": 1660, "hybrid_refined": 1330}.get(method, 1000), 460), "white")
     draw = ImageDraw.Draw(canvas)
     font = ImageFont.load_default(size=18)
     small = ImageFont.load_default(size=15)
@@ -86,6 +87,12 @@ def render_preview(image: Image.Image, title: str, footer: str, *, method: str =
         for index, name in enumerate(("hsv", "grabcut"), 1):
             panels.insert(index, (f"{name.upper()} component mask",
                                  Image.fromarray(result.component_masks[name].astype("uint8")*255)))
+    if method == "hybrid_refined":
+        colours = np.zeros((*result.markers.shape, 3), dtype=np.uint8)
+        colours[result.markers == 1] = (0, 150, 70)
+        colours[result.markers == 2] = (160, 160, 160)
+        colours[result.markers == 3] = (230, 150, 30)
+        panels.insert(1, ("GrabCut initial labels", Image.fromarray(colours)))
     if method == "watershed":
         # These are the actual initial markers, not a reconstruction from the final mask.
         colours = np.full((*result.markers.shape, 3), 160, dtype=np.uint8)
@@ -113,8 +120,10 @@ def render_preview(image: Image.Image, title: str, footer: str, *, method: str =
         status += (f" | HSV: {result.details['hybrid_hsv_fraction']:.1%}"
                    f" | GrabCut: {result.details['hybrid_grabcut_fraction']:.1%}"
                    f" | Mask agreement IoU: {result.details['hybrid_mask_jaccard']:.3f} (not accuracy)")
+    elif method == "hybrid_refined":
+        status += (f" | {result.details['refined_status']} | Seeds: green=FG, orange=probable FG, grey=probable BG, black=BG")
     draw.text((20, 393), status, fill="black", font=small)
-    for i, line in enumerate(textwrap.wrap(footer, width={"watershed": 140, "hybrid": 180}.get(method, 105))[:2]):
+    for i, line in enumerate(textwrap.wrap(footer, width={"watershed": 140, "hybrid": 180, "hybrid_refined": 140}.get(method, 105))[:2]):
         draw.text((20, 418+i*18), line, fill="black", font=small)
     return canvas
 

@@ -130,6 +130,36 @@ WATERSHED_SPEC = {
 # Guard OpenCV's seed/thread configuration for concurrent calls through this wrapper.
 _GRABCUT_LOCK = Lock()
 
+HYBRID_REFINED_SPEC = {
+    "version": "hybrid_hsv_seeded_grabcut_v1",
+    "opencv_version": "4.13.0",
+    "max_working_side": 200,
+    "image_resize": "preserve aspect ratio, round dimensions, Pillow BILINEAR; never upscale",
+    "saturation_min": 0.30,
+    "value_min": 0.10,
+    "hue_range": "all; no fruit/stage-specific thresholds",
+    "seed_opening_kernel": 5,
+    "core_erosion_kernel": 3,
+    "support_radius_fraction": 0.03,
+    "support_radius_min_pixels": 3,
+    "support_rule": "Euclidean distance to cleaned candidate <= radius; outside is hard background",
+    "border_pixels": 1,
+    "initialisation": "GC_INIT_WITH_MASK; eroded colour core definite FG, candidate probable FG, expansion probable BG, outside hard BG",
+    "min_component_fraction": 0.005,
+    "min_component_pixels": 16,
+    "max_hole_fraction": 0.02,
+    "max_hole_min_pixels": 9,
+    "hole_policy": "fill only enclosed holes at most max(9, floor(2% working area)); never fill all holes",
+    "closing_kernel": 3,
+    "iterations": 5,
+    "random_seed": 42,
+    "opencv_threads": 1,
+    "mask_resize": "Pillow NEAREST to original dimensions; no second original-resolution cleanup",
+    "background_rgb": [0, 0, 0],
+    "empty_mask_policy": "black image, flag for review, no original-image fallback or image exclusion",
+    "working_size": "seed construction, GrabCut and cleanup at max side 200; original RGB retained",
+}
+
 
 def processing_spec(method: str) -> dict:
     if method == "baseline":
@@ -156,6 +186,8 @@ def processing_spec(method: str) -> dict:
             "working_size": "component masks combined at original image resolution",
             "selection_basis": "HSV best processed accuracy; GrabCut best processed macro F1 on development validation",
         }
+    if method == "hybrid_refined":
+        return {**HYBRID_REFINED_SPEC, "background_rgb": list(HYBRID_REFINED_SPEC["background_rgb"])}
     raise ValueError(f"Unsupported method: {method}")
 
 
@@ -390,9 +422,106 @@ def watershed_candidate_mask(rgb: Image.Image, spec: dict) -> tuple[np.ndarray, 
     }, initial
 
 
+def _refined_components(mask: np.ndarray, spec: dict) -> np.ndarray:
+    labels, _ = ndimage.label(mask, structure=np.ones((3, 3), dtype=bool))
+    sizes = np.bincount(labels.ravel())
+    keep = sizes >= max(spec["min_component_pixels"], int(np.ceil(mask.size*spec["min_component_fraction"])))
+    keep[0] = False
+    return keep[labels]
+
+
+def _refined_holes(mask: np.ndarray, spec: dict) -> np.ndarray:
+    holes = ndimage.binary_fill_holes(mask) & ~mask
+    labels, _ = ndimage.label(holes, structure=np.ones((3, 3), dtype=bool))
+    sizes = np.bincount(labels.ravel())
+    small = sizes <= max(spec["max_hole_min_pixels"], int(mask.size*spec["max_hole_fraction"]))
+    small[0] = False
+    return mask | small[labels]
+
+
+def refined_hybrid(rgb: Image.Image, spec: dict) -> ProcessingResult:
+    """Colour-seeded GrabCut with bounded growth, NOT semantic fruit recognition.
+
+    This is a new method ID. The original HSV/GrabCut/union implementations and
+    their saved models are untouched. All decisions depend only on image pixels.
+    """
+    if cv2.__version__ != spec["opencv_version"]:
+        raise ValueError("Refined hybrid OpenCV version differs; install the pinned requirements")
+    scale = min(1.0, spec["max_working_side"]/max(rgb.size))
+    width, height = (max(1, int(round(d*scale))) for d in rgb.size)
+    working = rgb.resize((width, height), Image.Resampling.BILINEAR)
+    pixels = np.asarray(working, dtype=np.uint8)
+    labels = np.zeros((height, width), dtype=np.uint8)
+    candidate = np.zeros(labels.shape, dtype=bool)
+    mask = candidate.copy()
+    initial = labels.copy()
+    details = {"refined_width": width, "refined_height": height,
+               "refined_candidate_fraction": 0.0, "refined_core_fraction": 0.0,
+               "refined_support_fraction": 0.0, "refined_iterations": 0}
+    if min(width, height) < 7:
+        status = "too_small"
+    elif np.all(pixels == pixels[0, 0]):
+        status = "constant_working_image"
+    else:
+        hsv = np.asarray(working.convert("HSV"), dtype=np.float32)/255.0
+        colour = (hsv[:, :, 1] >= spec["saturation_min"]) & (hsv[:, :, 2] >= spec["value_min"])
+        kernel = spec["seed_opening_kernel"]
+        colour = ndimage.binary_opening(colour, structure=np.ones((kernel, kernel), dtype=bool))
+        colour = _refined_components(colour, spec)
+        candidate = _refined_holes(colour, spec)
+        core_kernel = spec["core_erosion_kernel"]
+        core = ndimage.binary_erosion(colour, structure=np.ones((core_kernel, core_kernel), dtype=bool))
+        details["refined_candidate_fraction"] = float(candidate.mean())
+        if not candidate.any() or int(core.sum()) < 5:
+            status = "no_colour_seeds"
+        else:
+            radius = max(spec["support_radius_min_pixels"], int(round(max(width, height)*spec["support_radius_fraction"])))
+            support = ndimage.distance_transform_edt(~candidate) <= radius
+            border = spec["border_pixels"]
+            support[:border, :] = support[-border:, :] = False
+            support[:, :border] = support[:, -border:] = False
+            labels[support] = cv2.GC_PR_BGD
+            labels[candidate & support] = cv2.GC_PR_FGD
+            labels[core & support] = cv2.GC_FGD
+            initial = labels.copy()
+            details.update(refined_core_fraction=float((labels == cv2.GC_FGD).mean()),
+                           refined_support_fraction=float(support.mean()))
+            bgr = np.ascontiguousarray(pixels[:, :, ::-1])
+            with _GRABCUT_LOCK:
+                previous_threads = cv2.getNumThreads()
+                try:
+                    cv2.setNumThreads(spec["opencv_threads"])
+                    cv2.setRNGSeed(spec["random_seed"])
+                    cv2.grabCut(bgr, labels, None, np.zeros((1, 65), dtype=np.float64),
+                                np.zeros((1, 65), dtype=np.float64), spec["iterations"], cv2.GC_INIT_WITH_MASK)
+                except cv2.error as exc:
+                    raise ValueError(f"Refined hybrid GrabCut failed: {exc}") from exc
+                finally:
+                    cv2.setNumThreads(previous_threads)
+            mask = (labels == cv2.GC_FGD) | (labels == cv2.GC_PR_FGD)
+            closing = spec["closing_kernel"]
+            mask = ndimage.binary_closing(mask, structure=np.ones((closing, closing), dtype=bool))
+            mask = _refined_holes(_refined_components(mask, spec), spec) & support
+            details["refined_iterations"] = spec["iterations"]
+            status = "completed" if mask.any() else "empty_result"
+    enlarged = Image.fromarray(mask.astype(np.uint8)*255).resize(rgb.size, Image.Resampling.NEAREST)
+    final = np.asarray(enlarged) > 0
+    fraction = float(final.mean())
+    output = np.asarray(rgb).copy()
+    output[~final] = spec["background_rgb"]
+    candidate_image = Image.fromarray(candidate.astype(np.uint8)*255).resize(rgb.size, Image.Resampling.NEAREST)
+    return ProcessingResult(rgb, Image.fromarray(output), final, {
+        **details, "refined_status": status, "foreground_fraction": fraction,
+        "mask_status": "empty" if fraction == 0 else "near_full" if fraction > 0.98 else "nonempty",
+        "refined_review_flag": "no_foreground" if fraction == 0 else "broad_colour_candidates" if details["refined_candidate_fraction"] > 0.85 else "inspect_mask",
+    }, markers=initial, component_masks={"colour_candidate": np.asarray(candidate_image) > 0})
+
+
 def process_image(image: Image.Image, method: str) -> ProcessingResult:
     spec = processing_spec(method)
     rgb = ImageOps.exif_transpose(image).convert("RGB")
+    if method == "hybrid_refined":
+        return refined_hybrid(rgb, spec)
     if method == "baseline":
         mask = np.ones((rgb.height, rgb.width), dtype=bool)
         return ProcessingResult(rgb, rgb.copy(), mask,

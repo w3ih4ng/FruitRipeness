@@ -66,7 +66,6 @@ class DesktopTests(unittest.TestCase):
         self.assertFalse(self.app.busy, 'Background worker did not finish')
 
     def run_one(self):
-        self.app.trust.set(True)
         self.app.set_inputs([self.sample])
         self.app.start(['hsv'])
         self.wait_worker()
@@ -75,19 +74,40 @@ class DesktopTests(unittest.TestCase):
 
     def test_widgets_discovery_and_missing_model_state(self):
         self.assertEqual(len(self.app.tabs.tabs()), 3)
-        self.assertEqual(len(self.app.run_boxes), 7)
+        self.assertFalse(hasattr(self.app, 'models_tab'))
+        self.assertFalse(hasattr(self.app, 'trust'))
+        self.assertEqual(self.app.hybrid_variant.get(), 'hybrid')
+        with patch.object(self.app, 'start') as start:
+            self.app.hybrid_variant.set('hybrid_refined')
+            next(b for b in self.app.buttons if b.cget('text') == 'Compare all six').invoke()
+            start.assert_called_with(['hsv', 'otsu', 'kmeans', 'grabcut', 'watershed', 'hybrid_refined'])
+            next(b for b in self.app.buttons if b.cget('text') == 'Compare hybrid versions').invoke()
+            start.assert_called_with(['hybrid', 'hybrid_refined'])
         self.assertEqual(len(self.app.selected_runs(['hsv'])), 1)
-        self.assertIn('Not trained', self.app.model_notes['hybrid'].cget('text'))
+        self.assertEqual(self.app.selected_runs(['hybrid'], required=False), [])
 
-    def test_trust_gate_and_compare_all_missing_runs(self):
+    def test_classifier_switch_updates_automatic_model_selection(self):
+        self.app.backend.set('shared_cnn')
+        self.app.change_backend()
+        self.assertEqual(str(self.app.cnn_box.cget('state')), 'readonly')
+        self.assertEqual(self.app.selected_runs(['hsv'], required=False), [])
+        self.app.set_busy(True)
+        self.assertEqual(str(self.app.backend_box.cget('state')), 'disabled')
+        self.app.set_busy(False)
+        self.app.backend.set('random_forest')
+        self.app.change_backend()
+        self.assertEqual(len(self.app.selected_runs(['hsv'])), 1)
+        self.assertEqual(str(self.app.cnn_box.cget('state')), 'disabled')
+
+    def test_prediction_starts_without_confirmation_and_missing_run_is_clear(self):
         self.app.set_inputs([self.sample])
         self.app.start(['hsv'])
-        self.assertFalse(self.app.busy)
-        self.assertTrue(self.errors)
-        self.app.trust.set(True)
+        self.wait_worker()
+        self.assertFalse(self.errors)
+        self.assertEqual(self.app.rows[0]['status'], 'ok')
         self.app.start(['hsv', 'hybrid'])
         self.assertFalse(self.app.busy)
-        self.assertIn('not trained', str(self.errors[-1]))
+        self.assertIn('no compatible saved model', str(self.errors[-1]))
 
     def test_worker_populates_table_and_preview(self):
         self.run_one()
@@ -120,6 +140,58 @@ class DesktopTests(unittest.TestCase):
             self.assertTrue((Path(tmp)/'results.csv').is_file())
             with Image.open(Path(tmp)/'preview.png') as image:
                 self.assertEqual(image.size, (920, 530))
+        self.assertFalse(self.errors)
+
+    def test_friendly_selectors_preserve_internal_method_and_model_ids(self):
+        from fruitripeness.ui_core import LABELS, CLASSIFIER_LABELS, run_label
+        self.assertEqual(self.app.backend_box.get(), CLASSIFIER_LABELS['random_forest'])
+        self.app.method_box.set(LABELS['hsv'])
+        self.assertEqual(self.app.method.get(), 'hsv')
+        with patch.object(self.app, 'start') as start:
+            next(b for b in self.app.buttons if b.cget('text') == 'Run selected method').invoke()
+            start.assert_called_with(['hsv'])
+        self.app.hybrid_variant.set('hybrid_refined')
+        self.assertEqual(self.app.hybrid_box.get(), LABELS['hybrid_refined'])
+        selected = self.app.selected_runs(['hsv'])[0]
+        self.assertEqual(self.app.run_vars['hsv'].get(), selected.path.name)
+        self.run_one()
+        self.assertEqual(self.app.table.item('0', 'values')[1], LABELS['hsv'])
+        self.assertEqual(self.app.rows[0]['method'], 'hsv')
+
+    def test_same_second_run_selection_and_widget_cleanup(self):
+        from fruitripeness.ui import NamedCombobox
+        from fruitripeness.ui_core import run_label
+        keys = ['20260828T085810_496281Z', '20260828T085810_496282Z']
+        var = self.tk.StringVar(master=self.root, value=keys[0])
+        box = NamedCombobox(self.root, textvariable=var, values=keys, label=run_label)
+        box.current(1)
+        self.assertEqual(var.get(), keys[1])
+        box.set_choices(keys[:1])
+        self.assertEqual(box.get(), '')  # No silent fallback to a different model.
+        var.set(keys[0])
+        self.assertEqual(box.get(), run_label(keys[0]))
+        box.destroy()
+        self.assertEqual(var.trace_info(), [])
+
+    def test_saved_test_tab_is_separate_and_exports_test_labels(self):
+        from fruitripeness.ui_core import Run
+        original=self.app.selected_runs(['hsv'])[0]
+        report_run=Run(self.base/'final_report',
+            {**original.metadata,'backend':'shared_cnn','source_run':str(original.path),
+             'evaluation_only':True,'evaluation_split':'test'},
+            {'test':original.metrics['validation']})
+        with patch('fruitripeness.final_test.read_report',return_value=[report_run]):
+            self.app.load_test_report(self.base/'final_report')
+        self.assertFalse(self.errors)
+        self.assertEqual(self.app.test_rows[0]['split'],'test')
+        self.assertEqual(self.app.eval_rows,[])
+        self.assertEqual(self.app.backend.get(),'random_forest')
+        self.assertTrue(self.app.test_canvas.find_all())
+        with tempfile.TemporaryDirectory() as tmp:
+            target=Path(tmp)/'test.csv'
+            with patch.object(self.app,'destination',return_value=str(target)):
+                self.app.save_test_metrics()
+            self.assertIn('test',target.read_text(encoding='utf-8-sig'))
         self.assertFalse(self.errors)
 
 

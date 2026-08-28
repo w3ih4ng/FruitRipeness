@@ -1,159 +1,92 @@
-# Local comparison UI
+# Desktop comparison UI
 
-This is a desktop window in the existing project, not a browser application.
-It loads the team's existing models; no retraining or dataset changes are needed.
-The baseline and all five processing methods plus hybrid remain unchanged.
-
-## Apply and launch
-
-Save `ui_update.patch` beside `pyproject.toml`. Run each command separately and stop
-if it reports an error. Successful git apply commands normally print nothing.
+Launch from the existing project:
 
 ```powershell
-git apply --check .\ui_update.patch
-git apply .\ui_update.patch
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
 .\.venv\Scripts\python.exe -m fruitripeness.ui
 ```
 
-This update adds no pip dependencies. Python's Tkinter must be installed. The normal
-python.org Windows installation includes Tcl/Tk when its Tcl/Tk/IDLE component is
-enabled. If the window cannot open, test:
+This is a local Tkinter application, not a web server. If Tkinter is missing,
+modify the same Python 3.12 installation to include Tcl/Tk. The UI never trains
+a model or changes dataset images. Run tests after source updates;
+desktop integration tests require a graphical Tk display.
 
-```powershell
-.\.venv\Scripts\python.exe -m tkinter
+## Automatic model selection
+
+- **CNN - MobileNetV2 (shared model)**: one frozen checkpoint for raw input,
+  all five individual methods and both hybrids. Select its UTC training date at
+  the top. The team's completed run is
+  `outputs/shared_cnn/20260828T085810_496281Z`.
+- **Random Forest (per-method models)**: earlier benchmark models. The application
+  automatically uses each method's newest compatible completed run.
+- Dates and descriptive method names are display labels only. Exact run IDs
+  remain in CSVs and metadata. Same-second runs remain separately selectable.
+- **Refresh models** rescans the configured `outputs` folder. Selection is based
+  on completion timestamp, never Test score. Loading still rejects incompatible
+  package versions, processing settings, hashes, class order and split metadata.
+- There is no Models & runs tab or repeated trust checkbox. The application is
+  intended for this team's locally generated models under its configured outputs
+  folder; do not copy unknown model files into that folder.
+- Changing the selector does not relabel existing results. Rerun predictions or
+  reload validation to show the new selection. Saved final Test always displays
+  the checkpoint recorded in that report, independently of this selector.
+
+## Images & folders
+
+1. Choose images or a folder. Enable **Include subfolders** before choosing
+   the folder when needed.
+2. Select a descriptive method name and **Run selected method**.
+3. **Compare all six** runs the five individual methods and the chosen hybrid.
+   **Hybrid A - HSV + GrabCut union** is the original version;
+   **Hybrid B - HSV-seeded GrabCut** is the refined version.
+   **Compare hybrid versions** runs both. Raw input is a separate reference option.
+4. Select a result row and choose **Preview selected image** to inspect it.
+5. Export predictions as CSV or the displayed comparison as PNG.
+
+Cards show original/processed images, masks, ripeness predictions, uncalibrated
+class scores, retained area and timing. Neither a predicted label nor mask coverage
+is dataset accuracy. Input filenames do not supply labels or features. CSVs
+keep stable internal method IDs; the results table uses readable names.
+
+JPG/JPEG, PNG, WEBP and BMP are supported. Unsupported entries appear in the log;
+corrupt images and method failures appear as error rows. Cancellation retains
+completed rows. Images above 20 megapixels are rejected, not silently resized.
+Preview reconstruction checks that source bytes still match the saved prediction.
+
+**Original-Test images and identical copies remain blocked in this tab.** Use
+the completed final Test report and its exported previews instead.
+
+## Saved validation
+
+Choose **Load selected runs** to display validation metrics and confusion matrices
+from the selected classifier/runs. Filter by fruit and reload as needed.
+Comparisons reject incompatible splits or classifiers. Validation figures are
+development measurements, not final Test scores. Export the displayed scope as
+CSV or PNG; raw baseline is a reference, not another member's method.
+
+## Saved final Test
+
+Choose **Open Test report** and select:
+
+```text
+outputs/final_test/20260828T100939_923549Z
 ```
 
-If Tkinter is missing, modify the SAME Python 3.12 installation to include Tcl/Tk.
-Do not recreate the repository. Keep the VS Code terminal running while using the
-app; closing the app returns to the terminal. Launch from the project root, or
-provide `--outputs C:\path\to\FruitRipeness\outputs`.
+Choose the report folder, not the dataset Test folder or the model folder. This
+read-only view shows all eight variants using the one frozen CNN, checks the saved
+report and metrics checksum, and offers per-fruit/overall CSV and PNG exports.
+The full report already contains comparisons, confusion matrices, predictions
+and example PNGs under `previews/`. It neither evaluates images nor retrains.
+See [final Test protocol](FINAL_TEST.md) for formats and limitations.
 
-## 1. Models & runs
+## Exports and reproducibility
 
-- Select the existing `outputs` folder. Refresh scans the seven known method/reference
-  directories, reads JSON and initially selects each newest valid completed run.
-- Each dropdown allows an older run to be selected explicitly. Full run paths are
-  recorded in exports. A missing model has a visible status; it is never fabricated.
-- Check the trust confirmation only for model files generated by your team. Joblib
-  can execute code when loaded; metadata checks cannot make an unknown file safe.
-- Model deserialisation occurs only when starting prediction after confirmation.
-  Discovery and saved validation viewing do not load joblib files.
-- Prediction validates installed package versions, processing settings, feature ID,
-  class order and agreement between saved model and run metadata.
-- Comparisons reject differing dataset split IDs, image counts, model parameters
-  or key training-library versions. CPU worker count is excluded from this check.
-- Refresh resets trust. Run selection is locked while processing is active.
+Choose new filenames outside source and selected run/report folders. Existing
+files are not overwritten. Raw IDs and full paths in CSVs preserve provenance;
+readable date/method labels appear in newly rendered figures. Existing saved
+PNGs/CSVs are not rewritten by this naming update.
 
-## 2. Images & folders
-
-1. Choose image(s): select one file or use Ctrl/Shift to select several.
-2. Alternatively choose a folder. Set Include subfolders BEFORE choosing it.
-3. Choose `hsv`, `otsu`, `kmeans`, `grabcut`, `watershed` or `hybrid` and Run selected
-   method, or use Compare all six on every selected input.
-4. View progress and the results table. Cancellation takes effect after the current
-   model/image operation; completed rows remain available to export.
-5. Select a result row and click Preview selected image (or double-click). This
-   reconstructs that image's masks using its unchanged source bytes while retaining
-   the scores and timings from the recorded prediction. Changed source bytes are
-   rejected. It does not silently pair old predictions with a new image.
-
-Every successful method card shows original, processed RGB, foreground mask,
-predicted stage, all three model scores, retained area and separate processing,
-feature-extraction and prediction times. All-six output uses a two-column grid.
-Scroll to see lower cards. The last processed image is previewed automatically;
-use the table to inspect earlier images. Only the current image's cards are kept
-in memory; full-image arrays are not retained for an entire folder.
-
-JPG/JPEG, PNG, WEBP and BMP are accepted. Unsupported files, missing paths and
-links are listed on Models & runs. Corrupt images and per-method failures produce
-error rows and do not prevent other valid inputs from running. Full source paths
-distinguish identical filenames in different subfolders. Selecting the same path
-twice does not process it twice; distinct files with identical pixels remain distinct.
-For safety, this first UI rejects images above 20 megapixels rather than silently
-resizing them. Resize a COPY if needed. It never modifies your originals.
-
-### Meaning of scores and timing
-
-Arbitrary inputs have no assumed true labels: there is no per-image accuracy or F1.
-Filenames and folder names never supply features or ground truth. Ripeness is an
-image-level three-class prediction, not a fruit-species or per-object prediction.
-Model scores are uncalibrated, not guarantees of correctness. The foreground masks
-are heuristics, not validated semantic fruit/blemish masks.
-
-Processing time includes the shared image transform; feature time includes RGB32
-preparation; prediction time includes one model call with one CPU worker. Disk
-read/decode, model loading, report rendering and GUI refresh are excluded. These
-numbers are not end-to-end latency and are not comparable to training's batch-average
-prediction times. Hybrid processing includes both HSV and GrabCut. Warm-up and
-hardware affect timings; use repeated runs on one machine for timing claims.
-
-### Original-Test protection
-
-Before decoding an input, the UI compares its byte hash with original-Test hashes
-in the saved split manifests. Matching content is blocked, even when renamed. An
-identical copy in Train is also blocked in this DEVELOPMENT UI; training data and
-existing experimental results are not changed. This is a guard, not a guarantee
-against re-encoded/edited Test copies: do not choose the original Test folder or
-copies of its images for development previews. Final Test evaluation remains a
-separate, later step after choices are frozen. Missing Test manifests block prediction
-because the holdout guard cannot be applied reliably.
-
-## 3. Saved validation
-
-Choose overall or a fruit scope and Load selected runs. The view reads saved
-validation metrics from the currently selected completed runs, including baseline.
-Missing methods are omitted and the loaded count is shown. It does NOT run models
-on the chosen input folder, recompute scores, or evaluate original Test.
-
-The view includes image count, accuracy, balanced accuracy, macro precision, macro
-recall, macro F1, run identity, split identity and each confusion matrix. Matrix rows
-are true stages and columns are predicted stages; cells contain counts. All metrics
-come from saved files, not hard-coded values. If dropdowns change, click Load selected
-runs again; exports always match the currently displayed snapshot, not unseen edits.
-
-The team's hybrid achieved 79.59% validation accuracy versus baseline 79.48%, but
-baseline retained higher balanced accuracy and macro F1. Do not describe the hybrid
-as universally better or these development scores as final-Test performance.
-
-## 4. Export for the report
-
-- Export predictions CSV: all completed method/image rows from the last run,
-  including errors. Includes full source path/hash, method, run, model hash, split
-  ID, predicted stage, all three scores, mask status and separate timings. A cancelled
-  run contains only completed rows, not predictions for unprocessed inputs.
-- Export preview PNG: the currently displayed source image and its successful method
-  cards. Failed methods are absent from the image; their error rows remain in CSV.
-  Export individual source comparisons one at a time by selecting result rows.
-- Export metrics CSV: displayed validation comparison for the selected fruit scope.
-- Export comparison PNG: displayed validation metrics plus confusion matrices.
-
-Choose a NEW filename outside input folders and selected run folders. The app
-refuses to overwrite any existing file, even if the native save dialog confirms it.
-For example, create `outputs/ui_reports` in Explorer and save reports there. Outputs
-under `outputs/` are already ignored by Git. Keep source/model filenames out of
-public reports if they contain private information. CSV text cells that could be
-interpreted as spreadsheet formulas are escaped.
-
-## Verification and scope
-
-69 non-GUI tests pass, including all earlier tests, real saved-model round trips,
-all-seven inference equivalence, folder recursion, corrupt-input handling, safe
-exports, holdout checks and cancellation. Five additional desktop integration tests
-run when Tk can open a graphical display: widget creation, trust/missing-model
-states, background inference, changed-source rejection and export/view workflows.
-The build environment had no display and could not install its graphical test
-dependency due to permissions, so those five GUI tests and visual layout verification
-were not run there. Run all 74 tests on the team's Windows desktop and inspect the
-window; report any failure or layout issue before relying on screenshots.
-
-No overlay controls, arbitrary method subsets, batch PNG archive, manual labels,
-new training controls or final-Test view are included in this first UI patch.
-The assignment's separate blemish/surface-quality and calibration requirements
-still need their agreed implementation or tutor-approved scope; this ripeness UI
-does not establish those measurements.
-
-References: [Python Tkinter and its threading model](https://docs.python.org/3.12/library/tkinter.html),
-[native file/folder dialogs](https://docs.python.org/3.12/library/dialog.html).
-Background workers never call Tk; a bounded queue is consumed on the main UI thread.
+Processing, input preparation and prediction times exclude disk reads, loading,
+rendering and GUI refresh. Hardware and warm-up affect them; one observation is
+not a timing benchmark. Masks remain heuristics, not annotated fruit masks.
+Keep successes, failures, validation and final Test evidence in the report.

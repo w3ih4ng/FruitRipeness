@@ -55,10 +55,10 @@ class UICoreTests(unittest.TestCase):
             self.assertEqual(set(found), set(LABELS))
             self.assertTrue(all(len(runs) == 1 for runs in found.values()))
             rows = evaluation_rows(self.runs)
-            self.assertEqual(len(rows), 7)
+            self.assertEqual(len(rows), 8)
             self.assertTrue(all(r['split'] == 'validation' for r in rows))
             self.assertEqual(rows[0]['accuracy'], self.runs[0].metrics['validation']['accuracy'])
-            self.assertEqual(evaluation_sheet(self.runs).size, (1280, 1900))
+            self.assertEqual(evaluation_sheet(self.runs).size, (1280, 2140))
 
     def test_discovery_skips_invalid_metadata_and_reports_it(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -84,7 +84,7 @@ class UICoreTests(unittest.TestCase):
                     load_model(self.runs[0], trusted=True)
                 loader.assert_not_called()
 
-    def test_all_seven_predictions_exactly_match_existing_helper(self):
+    def test_all_method_versions_predictions_exactly_match_existing_helper(self):
         before = self.sample.read_bytes()
         for run in self.runs:
             with self.subTest(method=run.method):
@@ -147,11 +147,11 @@ class UICoreTests(unittest.TestCase):
                       emit=lambda kind, data: events.append((kind, data)))
             rows = [data[0] for kind, data in events if kind == 'result']
             cards = [data[1] for kind, data in events if kind == 'result' and data[1]]
-            self.assertEqual(len(rows), 12)
-            self.assertTrue(all(r['status'] == 'error' for r in rows[:6]))
-            self.assertTrue(all(r['status'] == 'ok' for r in rows[6:]))
+            self.assertEqual(len(rows), 14)
+            self.assertTrue(all(r['status'] == 'error' for r in rows[:7]))
+            self.assertTrue(all(r['status'] == 'ok' for r in rows[7:]))
             self.assertTrue(all('true_stage' not in row for row in rows))
-            self.assertEqual(comparison_sheet(str(self.sample), cards).size, (1840, 1410))
+            self.assertEqual(comparison_sheet(str(self.sample), cards).size, (1840, 1850))
             self.assertEqual(before, self.sample.read_bytes())
             self.assertEqual(corrupt.read_bytes(), b'not an image')
 
@@ -214,6 +214,33 @@ class UICoreTests(unittest.TestCase):
         self.assertEqual(rows[0]['n_images'], self.runs[0].metrics['validation']['per_fruit'][scope]['n_images'])
         with self.assertRaisesRegex(ValueError, 'No saved'):
             evaluation_rows(self.runs, 'unknown-fruit')
+
+
+class DisplayNameTests(unittest.TestCase):
+    def test_friendly_names_cover_exact_existing_ids(self):
+        from fruitripeness.ui_core import CLASSIFIER_LABELS, choice_labels
+        self.assertEqual(set(LABELS), {'baseline', *METHODS})
+        self.assertEqual(set(CLASSIFIER_LABELS), {'random_forest', 'shared_cnn'})
+        self.assertEqual(len(set(LABELS.values())), len(LABELS))
+        self.assertEqual(choice_labels(LABELS, LABELS.__getitem__), LABELS)
+        self.assertIn('Hybrid A', LABELS['hybrid'])
+        self.assertIn('Hybrid B', LABELS['hybrid_refined'])
+
+    def test_run_date_is_utc_and_invalid_names_are_unchanged(self):
+        from fruitripeness.ui_core import run_label
+        self.assertEqual(run_label('20260828T085810_496281Z'), '28 Aug 2026, 08:58:10 UTC')
+        self.assertEqual(run_label('custom-run'), 'custom-run')
+        self.assertEqual(run_label('20261328T085810_496281Z'), '20261328T085810_496281Z')
+
+    def test_same_second_runs_are_distinct_and_exact_ids_are_retained(self):
+        from fruitripeness.ui_core import run_label, choice_labels
+        names = ['20260828T085810_496281Z', '20260828T085810_496282Z']
+        labels = choice_labels(names, run_label)
+        self.assertEqual(list(labels), names)
+        self.assertEqual(len(set(labels.values())), 2)
+        for key, value in labels.items():
+            self.assertIn(key, value)
+        self.assertEqual(choice_labels(names[:1], run_label)[names[0]], run_label(names[0]))
 
 
 if __name__ == '__main__':

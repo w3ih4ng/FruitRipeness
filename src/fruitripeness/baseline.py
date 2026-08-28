@@ -118,7 +118,7 @@ def image_features(path: Path, expected_sha256: str | None = None, *, method: st
 def feature_matrix(root: Path, rows: list[dict], *, method: str = "baseline",
                    diagnostics: list | None = None) -> np.ndarray:
     features = np.empty((len(rows), 32*32*3), dtype=np.float32)
-    progress_every = 250 if method in {"grabcut", "hybrid"} else 1000
+    progress_every = 250 if method in {"grabcut", "hybrid", "hybrid_refined"} else 1000
     for i,row in enumerate(rows):
         try:
             details = []
@@ -173,7 +173,7 @@ def evaluate(model, x: np.ndarray, rows: list[dict]) -> tuple[dict, list[dict]]:
 def predict_image(bundle: dict, path: Path) -> dict:
     """Inference helper for the later UI; path names never supply model features."""
     method = bundle.get("method")
-    if bundle.get("feature_id") != FEATURE_ID or method not in {"baseline", "hsv", "otsu", "kmeans", "grabcut", "watershed", "hybrid"}:
+    if bundle.get("feature_id") != FEATURE_ID or method not in {"baseline", "hsv", "otsu", "kmeans", "grabcut", "watershed", "hybrid", "hybrid_refined"}:
         raise ValueError("Model feature/method version is incompatible")
     # Legacy baseline bundles did not store a processing_spec; their path is unchanged.
     if method != "baseline" or "processing_spec" in bundle:
@@ -271,7 +271,9 @@ def train_baseline(data: Path, out: Path, *, evaluate_test: bool = False,
                    "watershed_width","watershed_height","watershed_markers","watershed_seed_fraction",
                    "watershed_background_fraction","watershed_boundary_fraction","watershed_status",
                    "hybrid_hsv_fraction","hybrid_grabcut_fraction","hybrid_hsv_status","hybrid_grabcut_status",
-                   "hybrid_intersection_fraction","hybrid_disagreement_fraction","hybrid_mask_jaccard"])
+                   "hybrid_intersection_fraction","hybrid_disagreement_fraction","hybrid_mask_jaccard",
+                   "refined_width","refined_height","refined_candidate_fraction","refined_core_fraction",
+                   "refined_support_fraction","refined_iterations","refined_status","refined_review_flag"])
     bundle = {"model": model,"method":method,"feature_id":FEATURE_ID,"split_id":split_id,
               "processing_spec":spec,"metadata":metadata}
     joblib.dump(bundle,run/"model.joblib",compress=3)

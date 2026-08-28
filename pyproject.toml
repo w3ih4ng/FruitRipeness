@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fruit-ripeness-study"
-version = "0.9.0"
+version = "0.14.0"
 description = "Mode A multi-fruit image-processing comparison with five methods and a hybrid"
 requires-python = ">=3.12,<3.13"
 dependencies = ["numpy==2.3.5", "Pillow==12.3.0", "scikit-learn==1.8.0", "joblib==1.5.3", "scipy==1.17.0", "threadpoolctl==3.6.0", "opencv-python-headless==4.13.0.92"]
@@ -14,6 +14,8 @@ fruit-audit = "fruitripeness.audit:main"
 fruit-baseline = "fruitripeness.baseline:main"
 fruit-experiment = "fruitripeness.experiment:main"
 fruit-ui = "fruitripeness.ui:main"
+fruit-cnn = "fruitripeness.cnn:main"
+fruit-final-test = "fruitripeness.final_test:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -1,112 +1,108 @@
 # Fruit Ripeness — Mode A
 
-One continuing VS Code/GitHub project for a five-method image-processing comparison
-and a team hybrid. The baseline and all five individual methods (HSV, Otsu,
-K-means, GrabCut and marker-controlled watershed) and an HSV + GrabCut union
-hybrid are implemented, with a local desktop comparison UI for images and folders.
+A local desktop application comparing five image-processing methods and two
+hybrid variants across multiple fruits. The final classifier is **one shared
+MobileNetV2 CNN**: a frozen pretrained backbone with a trained ripeness head.
+The earlier **Random Forest models** remain available as experimental benchmarks.
+Predictions are image-level **unripe, ripe or overripe**, not fruit-species detection.
 
-## 1. Create the GitHub repository
+## Open the application
 
-Create a **private**, empty repository named `FruitRipeness` on GitHub.
-Do not initialise it with a README, .gitignore or licence: this folder already has
-the required starter files. Keep source private to the approved group/tutor as
-required by the assignment. Do not reuse an unrelated previous project repository.
-
-Extract this starter ONCE. Open the actual `FruitRipeness` folder in VS Code.
-Later updates modify individual files in this folder.
-
-## 2. Install Python and the environment
-
-Use Python 3.12 and the VS Code Python extension. In the VS Code PowerShell terminal:
-
-```powershell
-py -3.12 --version
-git --version
-py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
-```
-
-Select `.venv\Scripts\python.exe` through **Python: Select Interpreter**.
-These commands deliberately do not require activating a PowerShell script or changing
-your execution policy. If Python 3.12 is missing, install it first; do not substitute
-another version without checking dependency compatibility.
-
-macOS/Linux equivalent: `python3.12 -m venv .venv`, then use `.venv/bin/python`
-in place of the Windows executable above.
-
-## 3. Dataset and baseline
-
-Your extracted dataset should contain `data/raw/Train` and `data/raw/Test`.
-A single wrapper folder such as `data/raw/archive/Train` is accepted too. Keep
-source images/labels unchanged. No audit, cleaning or deduplication is required.
-
-After applying the baseline update, run:
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
-.\.venv\Scripts\python.exe -m fruitripeness.baseline --data data/raw
-```
-
-The UI update includes 69 non-GUI tests plus 5 desktop integration tests (skipped
-when a graphical Tk display is unavailable). The baseline fits on 3,547 images from original Train and validates
-on a fixed 887-image subset; the original 180-image Test set is unchanged and not
-scored by default. Results and a model go into a new timestamped folder under
-`outputs/baseline/`. The run prints that exact path. See `docs/BASELINE.md`.
-
-The original read-only ZIP audit remains optional. Historical findings are recorded
-in `docs/DATASET_AUDIT.md`; they do not trigger image changes or block training.
-
-## 4. Push this starter
-
-From the project root, replace YOUR_USERNAME with your GitHub account:
-
-```powershell
-git init
-git branch -M main
-git add .
-git status
-git commit -m "Add dataset audit and Mode A project foundation"
-git remote add origin https://github.com/YOUR_USERNAME/FruitRipeness.git
-git push -u origin main
-```
-
-Before committing, check that `git status` does NOT list archive.zip, images, .venv,
-model binaries, credentials or generated audit outputs. Follow the normal GitHub
-sign-in prompt; do not paste access tokens into code or chat. If a command fails,
-stop and share its non-sensitive error; do not force-push or recreate the folder.
-
-Invite only approved teammates as collaborators through GitHub repository settings.
-On another laptop clone this repository and create a new .venv; do not copy .venv.
-
-## Open the comparison UI
-
-From this existing project folder:
+From this existing folder in the VS Code PowerShell terminal:
 
 ```powershell
 .\.venv\Scripts\python.exe -m fruitripeness.ui
 ```
 
-Open **Models & runs**, review the discovered runs and confirm your team's model
-files are trusted. Then choose images/a folder and run a method or Compare all six.
-**Saved validation** loads the measured metrics and confusion matrices, including
-the baseline reference. PNG/CSV exports are available. See `docs/UI.md`.
+1. Choose **CNN - MobileNetV2 (shared model)** in Classifier.
+2. Choose the training date **28 Aug 2026, 08:58:10 UTC**.
+3. Use **Images & folders** for image/folder predictions, **Saved validation** for
+   development metrics, or **Saved final Test** for the completed Test report.
 
-No new pip dependencies, browser server or retraining are required. Tkinter must
-be present in your Python installation; test it with `python -m tkinter` if needed.
-The original Test set stays reserved; final Test evaluation is a later milestone.
+In **Saved final Test → Open Test report**, select:
 
-The methods were tested on Python 3.12.13/Linux. The user reproduced baseline, HSV,
-Otsu, K-means, GrabCut, Watershed and hybrid results on Windows. The UI core tests
-pass on Linux; desktop rendering could not be verified in the headless build
-environment. Run the desktop integration tests and inspect the window on Windows.
+```text
+outputs/final_test/20260828T100939_923549Z
+```
 
-## Sources
+That report already contains all eight variants, comparison PNGs, CSVs and example
+images under `previews/`. Do not retrain or tune settings using Test results.
+The normal image picker still blocks original-Test content and identical copies;
+use the saved final report for Test evidence. See [UI guide](docs/UI.md).
 
-- Dataset: https://www.kaggle.com/datasets/asadullahprl/fruits-ripeness-classification-dataset
-- GitHub setup: https://docs.github.com/en/migrations/importing-source-code/using-the-command-line-to-import-source-code/adding-locally-hosted-code-to-github
-- VS Code environments: https://code.visualstudio.com/docs/python/environments
+## Names used in the application
 
-The assignment specification and template remain authoritative. Keep an AI usage
-record and ensure each member understands and can explain their own contribution.
+| Display name | Existing ID / folder | Meaning |
+|---|---|---|
+| CNN - MobileNetV2 (shared model) | `shared_cnn` | One classifier shared by every input variant |
+| Random Forest (per-method models) | Individual method folders | Earlier RF model for each input variant |
+| Raw image (baseline) | `baseline` | No segmentation; reference input |
+| Method 1 - HSV colour threshold | `hsv` | Saturation/value foreground threshold |
+| Method 2 - Otsu threshold | `otsu` | Automatic grayscale threshold |
+| Method 3 - K-means clustering | `kmeans` | Colour-based grouping |
+| Method 4 - GrabCut | `grabcut` | Rectangle-initialised foreground extraction |
+| Method 5 - Watershed | `watershed` | Marker-controlled segmentation |
+| Hybrid A - HSV + GrabCut union | `hybrid` | Union of two foreground masks |
+| Hybrid B - HSV-seeded GrabCut | `hybrid_refined` | Colour-seeded, bounded GrabCut refinement |
+
+Names are display-only. Folder names, model bytes, metadata, CSV IDs, splits and
+processing rules are unchanged. Dates are shown in **UTC**, not local time. Runs
+created in the same second also show their exact IDs so they remain distinct.
+Hybrid A/B identify designs, not a ranking. Keep both in the report.
+
+## What to keep
+
+| Location | Purpose |
+|---|---|
+| `src/fruitripeness/` | Processing, training, evaluation and desktop UI code |
+| `tests/` | Regression tests, retained to protect reproducibility |
+| `docs/` | Method explanations, experiment protocols and dataset limitations |
+| `data/raw/` | Original dataset, unchanged |
+| `outputs/` | Complete trained runs, validation results and final Test reports |
+| `requirements.txt`, `requirements-cnn.txt`, `pyproject.toml` | Pinned installation requirements |
+
+The application automatically selects the newest compatible saved run. Models
+live inside complete output runs, not a separate deployment folder.
+Do not rename or split up saved run folders: models depend on accompanying metadata
+and manifests. Generated data/models/results are ignored by Git; back them up
+separately. The source repository alone cannot restore them.
+
+Old downloaded `.patch` files are only installers. After an update is applied and
+committed, you can move those downloads out of the project. This cleanup does not
+delete dataset archives, caches, environments or generated runs on your PC.
+The obsolete planning document and unused `models/README.md` placeholder are removed;
+their contents remain recoverable from the patch or your Git history.
+
+## Setup on another computer
+
+Clone the existing private repository; do not create another project. Install
+Python 3.12, then run:
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements-cnn.txt
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+Copy your backed-up original dataset and complete output runs separately. Select
+`.venv\Scripts\python.exe` as the VS Code interpreter. Keep pinned dependencies;
+saved models check compatible versions. No retraining is needed to use them.
+
+## Technical references for the report
+
+- [Raw/RF baseline](docs/BASELINE.md)
+- [HSV](docs/METHOD1_HSV.md), [Otsu](docs/METHOD2_OTSU.md),
+  [K-means](docs/METHOD3_KMEANS.md), [GrabCut](docs/METHOD4_GRABCUT.md),
+  [Watershed](docs/METHOD5_WATERSHED.md)
+- [Hybrid A](docs/HYBRID.md), [Hybrid B](docs/HYBRID_REFINED.md)
+- [Shared CNN protocol](docs/SHARED_CNN.md), [final Test protocol](docs/FINAL_TEST.md)
+- [Dataset limitations](docs/DATASET_AUDIT.md), [output files](outputs/README.md)
+
+The method/protocol documents retain historical reproduction commands; they are
+not a request to rerun experiments after final Test evaluation. Keep an AI-use
+record and ensure every member can explain their contribution.
+
+Dataset: [Fruits Ripeness Classification Dataset](https://www.kaggle.com/datasets/asadullahprl/fruits-ripeness-classification-dataset).
+Original images, labels and duplicates are retained. Cross-split duplicates limit
+claims about independent generalisation; all model scores are uncalibrated.

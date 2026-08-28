@@ -16,6 +16,5 @@ data/*
 outputs/*
 !outputs/README.md
 models/*
-!models/README.md
 .DS_Store
 Thumbs.db

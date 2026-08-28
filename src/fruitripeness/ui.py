@@ -10,12 +10,50 @@ import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from PIL import Image, ImageOps, ImageTk
+from PIL import Image, ImageTk
 
 from .processing import process_image
-from .ui_core import (LABELS, METHODS, METRIC_FIELDS, RESULT_FIELDS, collect_inputs,
+from .ui_core import (LABELS, CLASSIFIER_LABELS, METHODS, HYBRID_VARIANTS, choice_labels, run_label,
+                      comparison_methods, METRIC_FIELDS, RESULT_FIELDS, collect_inputs,
                       comparison_sheet, discover_runs, evaluation_rows, evaluation_sheet,
                       export_csv, export_png, prediction_card, run_batch)
+
+
+class NamedCombobox(ttk.Combobox):
+    """Show friendly labels while the application keeps exact, stable IDs."""
+    def __init__(self, parent, *, textvariable, values=(), label=str, **kwargs):
+        self.key_variable = textvariable
+        self.display_variable = tk.StringVar(master=parent)
+        self.format_label = label
+        self.labels = {}
+        self.syncing = False
+        super().__init__(parent, textvariable=self.display_variable, **kwargs)
+        self.key_trace = self.key_variable.trace_add('write', self.show_key)
+        self.display_trace = self.display_variable.trace_add('write', self.select_key)
+        self.set_choices(values)
+
+    def set_choices(self, keys):
+        self.labels = choice_labels(keys, self.format_label)
+        self.configure(values=list(self.labels.values()))
+        self.show_key()
+
+    def show_key(self, *_):
+        self.syncing = True
+        try:
+            self.display_variable.set(self.labels.get(self.key_variable.get(), ''))
+        finally:
+            self.syncing = False
+
+    def select_key(self, *_):
+        if not self.syncing:
+            key = next((key for key, value in self.labels.items()
+                        if value == self.display_variable.get()), '')
+            self.key_variable.set(key)
+
+    def destroy(self):
+        self.key_variable.trace_remove('write', self.key_trace)
+        self.display_variable.trace_remove('write', self.display_trace)
+        super().destroy()
 
 
 class App:
@@ -35,19 +73,25 @@ class App:
         self.eval_rows = []
         self.eval_image = None
         self.eval_protected = []
+        self.test_runs = []
+        self.test_rows = []
+        self.test_image = None
+        self.test_protected = []
         self.found = {}
-        self.run_vars = {}
-        self.run_boxes = {}
-        self.model_notes = {}
+        self.run_vars = {method: tk.StringVar(master=root) for method in LABELS}
+        self.discovery_warnings = []
         self.buttons = []
-        self.photos = []
-        self.output_var = tk.StringVar(value=str(Path(outputs).resolve()))
+        self.outputs = Path(outputs).resolve()
         self.status = tk.StringVar(value='Choose images or a folder to begin.')
         self.input_note = tk.StringVar(value='No images selected')
-        self.trust = tk.BooleanVar(value=False)
         self.recursive = tk.BooleanVar(value=False)
         self.method = tk.StringVar(value='hybrid')
+        self.hybrid_variant = tk.StringVar(value='hybrid')
+        self.backend = tk.StringVar(value='shared_cnn')
+        self.cnn_run = tk.StringVar()
         self.scope = tk.StringVar(value='overall')
+        self.test_scope = tk.StringVar(value='overall')
+        self.test_note = tk.StringVar(value='Open a completed outputs/final_test/<timestamp> report. This tab reads results only; it does not evaluate images.')
         self.root.title('Fruit Ripeness | Comparison Studio')
         width = min(1280, max(800, root.winfo_screenwidth()-80))
         height = min(850, max(600, root.winfo_screenheight()-100))
@@ -66,24 +110,37 @@ class App:
         header.pack(fill='x')
         tk.Label(header, text='FRUIT RIPENESS', font=('Segoe UI', 21, 'bold'), bg='#214737', fg='white').pack(side='left')
         tk.Label(header, text='Comparison Studio  /  Mode A', font=('Segoe UI', 12), bg='#214737', fg='#cee3d5').pack(side='right')
+        classifier_bar = ttk.Frame(root, padding=(12, 4))
+        classifier_bar.pack(fill='x')
+        ttk.Label(classifier_bar, text='Classifier:').pack(side='left', padx=(0, 8))
+        self.backend_box = NamedCombobox(classifier_bar, textvariable=self.backend,
+            values=CLASSIFIER_LABELS, label=CLASSIFIER_LABELS.__getitem__, state='readonly', width=34)
+        self.backend_box.pack(side='left', padx=(0, 12))
+        self.backend_box.bind('<<ComboboxSelected>>', self.change_backend)
+        ttk.Label(classifier_bar, text='CNN trained on:').pack(side='left', padx=(0, 8))
+        self.cnn_box = NamedCombobox(classifier_bar, textvariable=self.cnn_run,
+            label=run_label, state='disabled', width=34)
+        self.cnn_box.pack(side='left', padx=(0, 10))
+        self.cnn_box.bind('<<ComboboxSelected>>', self.select_cnn_run)
+        self.button(classifier_bar, 'Refresh models', self.refresh_runs)
         self.tabs = ttk.Notebook(root)
         self.tabs.pack(fill='both', expand=True, padx=12, pady=10)
         self.input_tab = ttk.Frame(self.tabs, padding=12)
         self.eval_tab = ttk.Frame(self.tabs, padding=12)
-        self.models_tab = ttk.Frame(self.tabs, padding=12)
+        self.test_tab = ttk.Frame(self.tabs, padding=12)
         self.tabs.add(self.input_tab, text='  Images & folders  ')
         self.tabs.add(self.eval_tab, text='  Saved validation  ')
-        self.tabs.add(self.models_tab, text='  Models & runs  ')
+        self.tabs.add(self.test_tab, text='  Saved final Test  ')
         self.build_inputs()
         self.build_evaluation()
-        self.build_models()
+        self.build_test_evaluation()
         footer = ttk.Frame(root, padding=(15, 6))
         footer.pack(fill='x')
         self.progress = ttk.Progressbar(footer, mode='determinate', length=190)
         self.progress.pack(side='right')
         ttk.Label(footer, textvariable=self.status, wraplength=950).pack(side='left')
         self.root.protocol('WM_DELETE_WINDOW', self.close)
-        self.refresh_runs()
+        self.refresh_runs(fallback=True)
         self.root.after(100, self.poll)
 
     def button(self, parent, text, command, *, accent=False):
@@ -115,12 +172,20 @@ class App:
         ttk.Label(self.input_tab, textvariable=self.input_note, wraplength=900).pack(anchor='w', pady=(3, 8))
         actions = ttk.Frame(self.input_tab)
         actions.pack(fill='x')
-        self.method_box = ttk.Combobox(actions, textvariable=self.method, values=METHODS, state='readonly', width=14)
+        self.method_box = NamedCombobox(actions, textvariable=self.method, values=['baseline', *METHODS],
+            label=LABELS.__getitem__, state='readonly', width=35)
         self.method_box.pack(side='left', padx=(0, 8))
         self.button(actions, 'Run selected method', lambda: self.start([self.method.get()]), accent=True)
-        self.button(actions, 'Compare all six', lambda: self.start(list(METHODS)), accent=True)
+        self.button(actions, 'Compare all six', lambda: self.start(comparison_methods(self.hybrid_variant.get())), accent=True)
         self.cancel_button = ttk.Button(actions, text='Cancel', command=self.cancel_work, state='disabled')
         self.cancel_button.pack(side='left')
+        variants = ttk.Frame(self.input_tab)
+        variants.pack(fill='x', pady=(3, 0))
+        ttk.Label(variants, text='Hybrid used by Compare all six:').pack(side='left', padx=(0, 8))
+        self.hybrid_box = NamedCombobox(variants, textvariable=self.hybrid_variant, values=HYBRID_VARIANTS,
+            label=LABELS.__getitem__, state='readonly', width=35)
+        self.hybrid_box.pack(side='left', padx=(0, 10))
+        self.button(variants, 'Compare hybrid versions', lambda: self.start(list(HYBRID_VARIANTS)))
         ttk.Label(self.input_tab, text='No ground truth is assumed for these inputs. Scores are uncalibrated; masks are heuristics. Original-Test content is blocked.',
                   wraplength=900).pack(anchor='w', pady=(8, 7))
         panes = ttk.Panedwindow(self.input_tab, orient='vertical')
@@ -142,7 +207,7 @@ class App:
         headings = ['Source', 'Method', 'Status', 'Prediction', 'Process ms', 'Predict ms', 'Error']
         for name, heading in zip(columns, headings):
             self.table.heading(name, text=heading)
-            self.table.column(name, width=330 if name in ['source', 'error'] else 100, stretch=False)
+            self.table.column(name, width=330 if name in ['source', 'error'] else 265 if name == 'method' else 100, stretch=False)
         ybar = ttk.Scrollbar(table_area, orient='vertical', command=self.table.yview)
         xbar = ttk.Scrollbar(table_area, orient='horizontal', command=self.table.xview)
         self.table.configure(yscrollcommand=ybar.set, xscrollcommand=xbar.set)
@@ -163,94 +228,145 @@ class App:
         self.button(controls, 'Load selected runs', self.load_evaluation, accent=True)
         self.button(controls, 'Export metrics CSV', self.save_metrics)
         self.button(controls, 'Export comparison PNG', self.save_evaluation)
-        ttk.Label(self.eval_tab, text='Reads saved validation metrics only. Baseline is a reference, not a seventh processing method. No retraining or Test evaluation.',
+        ttk.Label(self.eval_tab, text='Reads saved validation metrics only. Baseline is a reference; hybrid versions are separate experiments. No retraining or Test evaluation.',
                   wraplength=900).pack(anchor='w', pady=10)
         frame, self.eval_canvas = self.scroll_image(self.eval_tab)
         frame.pack(fill='both', expand=True)
 
-    def build_models(self):
-        controls = ttk.Frame(self.models_tab)
+    def build_test_evaluation(self):
+        controls = ttk.Frame(self.test_tab)
         controls.pack(fill='x')
-        ttk.Label(controls, text='Outputs folder:').pack(side='left', padx=(0, 10))
-        self.output_entry = ttk.Entry(controls, textvariable=self.output_var)
-        self.output_entry.pack(side='left', fill='x', expand=True, padx=(0, 10))
-        self.button(controls, 'Browse', self.choose_outputs)
-        self.button(controls, 'Refresh runs', self.refresh_runs)
-        ttk.Label(self.models_tab, text='Newest completed run is selected initially. Choose older runs here if needed; incompatible splits/settings are rejected.',
-                  wraplength=900).pack(anchor='w', pady=12)
-        grid = ttk.Frame(self.models_tab)
-        grid.pack(fill='x')
-        for i, (method, label) in enumerate(LABELS.items()):
-            ttk.Label(grid, text=label, width=32).grid(row=i, column=0, sticky='w', pady=7)
-            var = tk.StringVar()
-            box = ttk.Combobox(grid, textvariable=var, state='readonly', width=36)
-            box.grid(row=i, column=1, sticky='ew', padx=10, pady=7)
-            note = ttk.Label(grid, text='Not trained')
-            note.grid(row=i, column=2, sticky='w', padx=10)
-            box.bind('<<ComboboxSelected>>', lambda event: self.update_model_notes())
-            self.run_vars[method], self.run_boxes[method], self.model_notes[method] = var, box, note
-        grid.columnconfigure(1, weight=1)
-        self.trust_check = ttk.Checkbutton(self.models_tab, variable=self.trust,
-            text="I confirm these model.joblib files were generated by my team and are trusted.")
-        self.trust_check.pack(anchor='w', pady=(22, 6))
-        ttk.Label(self.models_tab, text='Model files can execute code when loaded. Metadata checks do not make untrusted model files safe.\n'
-                  'Discovery and the validation view read JSON only; prediction requires your confirmation.\n'
-                  'Processing runs locally. Source images and saved runs are never modified.', wraplength=900).pack(anchor='w')
-        self.log = tk.Text(self.models_tab, height=7, wrap='word', background='white', relief='flat', padx=8, pady=8)
-        self.log.pack(fill='both', expand=True, pady=12)
-        self.log.configure(state='disabled')
+        self.button(controls, 'Open Test report', self.open_test_report, accent=True)
+        ttk.Label(controls, text='Fruit scope:').pack(side='left', padx=(0, 8))
+        self.test_scope_box = ttk.Combobox(controls, textvariable=self.test_scope,
+            values=['overall'], state='readonly', width=14)
+        self.test_scope_box.pack(side='left', padx=(0, 10))
+        self.button(controls, 'Load scope', self.load_test_view)
+        exports = ttk.Frame(self.test_tab)
+        exports.pack(fill='x')
+        self.button(exports, 'Export Test metrics CSV', self.save_test_metrics)
+        self.button(exports, 'Export Test comparison PNG', self.save_test_image)
+        ttk.Label(self.test_tab, textvariable=self.test_note, wraplength=1100).pack(anchor='w', pady=8)
+        frame, self.test_canvas = self.scroll_image(self.test_tab)
+        frame.pack(fill='both', expand=True)
 
-    def log_messages(self, messages):
-        self.log.configure(state='normal')
-        self.log.delete('1.0', 'end')
-        self.log.insert('end', '\n'.join(messages) if messages else 'All discovered runs passed metadata checks.')
-        self.log.configure(state='disabled')
+    def open_test_report(self):
+        path = filedialog.askdirectory(parent=self.root, title='Choose completed outputs/final_test/<timestamp> folder', mustexist=True)
+        if path:
+            self.load_test_report(Path(path))
+
+    def load_test_report(self, path):
+        try:
+            from .final_test import read_report
+            runs = read_report(path)
+            # Read and render first so invalid reports do not replace a valid view.
+            rows = evaluation_rows(runs, split='test')
+            image = evaluation_sheet(runs, split='test')
+            self.test_runs, self.test_rows, self.test_image = runs, rows, image
+            self.test_scope.set('overall')
+            fruits = sorted(runs[0].metrics['test']['per_fruit'])
+            self.test_scope_box.configure(values=['overall',*fruits])
+            self.test_protected = [Path(path).resolve(),Path(runs[0].metadata['source_run'])]
+            self.test_note.set(f"FINAL TEST / MobileNetV2 CNN trained {run_label(Path(runs[0].metadata['source_run']).name)} | Report: {run_label(Path(path).name)}. Independent of the top classifier selector; no tuning or retraining.")
+            self.display(self.test_canvas,image,1180)
+            self.status.set(f'Loaded all {len(runs)} variants from final-Test report: {path}')
+        except Exception as exc:
+            self.error(exc)
+
+    def load_test_view(self):
+        try:
+            rows = evaluation_rows(self.test_runs,self.test_scope.get(),split='test')
+            image = evaluation_sheet(self.test_runs,self.test_scope.get(),split='test')
+            self.test_rows,self.test_image = rows,image
+            self.display(self.test_canvas,image,1180)
+            self.status.set(f'Loaded saved final Test / {self.test_scope.get()} / {len(rows)} methods')
+        except Exception as exc:
+            self.error(exc)
+
+    def save_test_metrics(self):
+        try:
+            if not self.test_rows:
+                raise ValueError('Open a completed final-Test report first')
+            path = self.destination('Export displayed final-Test metrics', '.csv')
+            if path:
+                export_csv(Path(path),self.test_rows,METRIC_FIELDS,[*self.protected,*self.test_protected])
+                self.status.set(f'Exported final-Test metrics: {path}')
+        except Exception as exc:
+            self.error(exc)
+
+    def save_test_image(self):
+        try:
+            if self.test_image is None:
+                raise ValueError('Open a completed final-Test report first')
+            path = self.destination('Export displayed final-Test comparison', '.png')
+            if path:
+                export_png(Path(path),self.test_image,[*self.protected,*self.test_protected])
+                self.status.set(f'Exported final-Test comparison: {path}')
+        except Exception as exc:
+            self.error(exc)
 
     def selected_runs(self, methods, required=True):
         runs = []
         for method in methods:
             run = next((run for run in self.found.get(method, []) if run.path.name == self.run_vars[method].get()), None)
             if run is None and required:
-                raise ValueError(f'{method}: not trained / no valid run selected. Check Models & runs.')
+                raise ValueError(f'{LABELS[method]}: no compatible saved model was found in {self.outputs}.')
             if run:
                 runs.append(run)
         return runs
 
-    def update_model_notes(self):
-        for method, note in self.model_notes.items():
-            runs = self.selected_runs([method], required=False)
-            if not runs:
-                note.configure(text='Not trained / no valid run')
-            else:
-                run = runs[0]
-                available = (run.path/'model.joblib').is_file()
-                note.configure(text=f"{'Model ready' if available else 'Model missing'} | validation n={run.metrics['validation']['n_images']}")
+    def update_scopes(self):
         scopes = sorted({fruit for run in self.selected_runs(LABELS, required=False)
                          for fruit in run.metrics['validation'].get('per_fruit', {})})
         self.scope_box.configure(values=['overall', *scopes])
         if self.scope.get() not in ['overall', *scopes]:
             self.scope.set('overall')
 
-    def refresh_runs(self):
+    def refresh_runs(self, fallback=False):
         if self.busy:
             return
-        self.trust.set(False)
-        self.found, warnings = discover_runs(Path(self.output_var.get()).expanduser())
+        self.found, warnings = discover_runs(self.outputs, self.backend.get())
+        if fallback and self.backend.get() == 'shared_cnn' and not self.found['baseline']:
+            self.backend.set('random_forest')
+            self.found, fallback_warnings = discover_runs(self.outputs, 'random_forest')
+            warnings.extend(fallback_warnings)
         for method, runs in self.found.items():
             names = [run.path.name for run in runs]
             old = self.run_vars[method].get()
-            self.run_boxes[method].configure(values=names)
             self.run_vars[method].set(old if old in names else names[0] if names else '')
-        self.update_model_notes()
-        self.log_messages(warnings)
+        if self.backend.get() == 'shared_cnn':
+            names = [run.path.name for run in self.found['baseline']]
+            self.cnn_box.set_choices(names)
+            self.cnn_run.set(self.cnn_run.get() if self.cnn_run.get() in names else names[0] if names else '')
+            for var in self.run_vars.values():
+                var.set(self.cnn_run.get())
+        else:
+            self.cnn_box.set_choices([])
+            self.cnn_run.set('')
+        self.sync_classifier_controls()
+        self.update_scopes()
+        self.discovery_warnings = warnings
         count = sum(bool(runs) for runs in self.found.values())
-        self.status.set(f'{count}/7 method/reference run groups found. Confirm trusted models on Models & runs before prediction.')
+        warning_note = f' | {len(warnings)} incompatible/incomplete run(s) ignored' if warnings else ''
+        self.status.set(f'{CLASSIFIER_LABELS[self.backend.get()]}: {count}/{len(LABELS)} model groups ready{warning_note}.')
 
-    def choose_outputs(self):
-        folder = filedialog.askdirectory(parent=self.root, title='Choose the outputs folder', mustexist=True)
-        if folder:
-            self.output_var.set(folder)
-            self.refresh_runs()
+    def sync_classifier_controls(self):
+        self.backend_box.configure(state='disabled' if self.busy else 'readonly')
+        self.cnn_box.configure(state='readonly' if not self.busy and self.backend.get() == 'shared_cnn' else 'disabled')
+
+    def change_backend(self, event=None):
+        if self.busy:
+            return
+        self.refresh_runs()
+        self.status.set(f"Classifier: {CLASSIFIER_LABELS[self.backend.get()]}. The newest compatible saved run is selected automatically.")
+
+    def select_cnn_run(self, event=None):
+        if self.busy:
+            return
+        for var in self.run_vars.values():
+            var.set(self.cnn_run.get())
+        self.update_scopes()
+        self.status.set('One shared CNN run selected automatically for every method. Reload validation if needed.')
 
     def choose_files(self):
         files = filedialog.askopenfilenames(parent=self.root, title='Choose one or more images',
@@ -268,8 +384,7 @@ class App:
             self.inputs, warnings = collect_inputs(paths, recursive)
             self.protected = [p.resolve() if p.is_dir() else p.resolve().parent for p in paths]
             self.input_note.set(f'{len(self.inputs)} image(s) selected | {len(warnings)} skipped entries | ' + str(paths[0]))
-            self.log_messages(warnings)
-            self.status.set('Inputs selected. Previous results remain until the next run; skipped entries are listed on Models & runs.')
+            self.status.set(f'Inputs selected. Previous results remain until the next run; {len(warnings)} unsupported/invalid entries skipped.')
         except Exception as exc:
             self.error(exc)
 
@@ -277,11 +392,11 @@ class App:
         self.busy = busy
         for button in self.buttons:
             button.configure(state='disabled' if busy else 'normal')
-        for box in [self.method_box, self.scope_box, *self.run_boxes.values()]:
+        for box in [self.method_box, self.hybrid_box, self.scope_box, self.test_scope_box]:
             box.configure(state='disabled' if busy else 'readonly')
-        for control in [self.output_entry, self.trust_check, self.recurse_check]:
-            control.configure(state='disabled' if busy else 'normal')
+        self.recurse_check.configure(state='disabled' if busy else 'normal')
         self.cancel_button.configure(state='normal' if busy else 'disabled')
+        self.sync_classifier_controls()
 
     def launch(self, task):
         self.cancel.clear()
@@ -302,9 +417,6 @@ class App:
         try:
             if not self.inputs:
                 raise ValueError('Choose at least one supported image first.')
-            if not self.trust.get():
-                self.tabs.select(self.models_tab)
-                raise ValueError("Confirm the model files are your team's trusted files on Models & runs.")
             runs = self.selected_runs(methods)
             from .ui_core import ensure_compatible
             ensure_compatible(runs)
@@ -335,6 +447,7 @@ class App:
                     row, card = value
                     self.rows.append(row)
                     values = [row.get(key, '') for key in ['source', 'method', 'status', 'predicted_stage', 'processing_ms', 'prediction_ms', 'error']]
+                    values[1] = LABELS.get(values[1], values[1])
                     values[4:6] = [f'{v:.1f}' if isinstance(v, float) else v for v in values[4:6]]
                     self.table.insert('', 'end', iid=str(len(self.rows)-1), values=values)
                     if row['source'] != self.card_source:
@@ -390,7 +503,7 @@ class App:
         selection = self.table.selection()
         if selection and not self.busy:
             row = self.rows[int(selection[0])]
-            self.status.set(f"{row['source']} | {row['method']} | {row.get('error') or row.get('predicted_stage', '')}")
+            self.status.set(f"{row['source']} | {LABELS[row['method']]} | {row.get('error') or row.get('predicted_stage', '')}")
 
     def preview_selected(self):
         if self.busy:
@@ -429,7 +542,7 @@ class App:
             self.eval_rows, self.eval_image = rows, image
             self.eval_protected = [r.path for r in runs]
             self.display(self.eval_canvas, image, 1180)
-            self.status.set(f'Loaded saved validation: {len(runs)}/7 selected runs | {scope}. Missing methods are omitted, not invented.')
+            self.status.set(f'Loaded saved validation: {len(runs)}/{len(LABELS)} selected runs | {scope}. Missing methods are omitted, not invented.')
         except Exception as exc:
             self.error(exc)
 
