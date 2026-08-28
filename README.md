@@ -2,8 +2,8 @@
 
 One continuing VS Code/GitHub project for a five-method image-processing comparison
 and a team hybrid. The baseline and all five individual methods (HSV, Otsu,
-K-means, GrabCut and marker-controlled watershed) are implemented. The hybrid
-and UI will be added incrementally.
+K-means, GrabCut and marker-controlled watershed) and an HSV + GrabCut union
+hybrid are implemented. The UI is the next milestone.
 
 ## 1. Create the GitHub repository
 
@@ -49,7 +49,7 @@ After applying the baseline update, run:
 .\.venv\Scripts\python.exe -m fruitripeness.baseline --data data/raw
 ```
 
-Expect 47 tests after the watershed update. The baseline fits on 3,547 images from original Train and validates
+Expect 55 tests after the hybrid update. The baseline fits on 3,547 images from original Train and validates
 on a fixed 887-image subset; the original 180-image Test set is unchanged and not
 scored by default. Results and a model go into a new timestamped folder under
 `outputs/baseline/`. The run prints that exact path. See `docs/BASELINE.md`.
@@ -81,15 +81,15 @@ On another laptop clone this repository and create a new .venv; do not copy .ven
 
 ## Next milestone
 
-Run Watershed Method 5 and compare with your saved baseline. See `docs/METHOD5_WATERSHED.md`.
+Run the hybrid and compare with your saved baseline. See `docs/HYBRID.md`.
 The earlier method commands remain supported; existing models do not need a rerun.
-This update uses the same dependencies as GrabCut; reinstall to update project metadata.
+This update adds no dependencies; reinstall to update project metadata.
 Use the same dataset, validation split, feature extractor and model parameters.
 `docs/EXPERIMENT_AND_UI_PLAN.md` includes single-image, multi-image and folder input,
 comparison of five methods plus hybrid, and PNG/CSV exports. This UI is not built yet.
 
 The methods were tested on Python 3.12.13/Linux. The user reproduced baseline, HSV,
-Otsu, K-means and GrabCut results on Windows; rerun the tests after each update on Windows.
+Otsu, K-means, GrabCut and Watershed results on Windows; rerun the tests after each update on Windows.
 
 ## Sources
 

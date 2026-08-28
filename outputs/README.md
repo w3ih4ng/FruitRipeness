@@ -36,3 +36,11 @@ It adds initial-marker count, seed/background coverage, working dimensions and
 watershed boundary/status diagnostics. Its 1330 x 460 previews contain four panels:
 original, actual initial markers, final mask and processed RGB. Earlier methods'
 1000 x 460 previews are unchanged. See docs/METHOD5_WATERSHED.md for the fixed rules.
+
+The hybrid uses outputs/hybrid/<run timestamp>/ with the same layout. Diagnostics
+add each component's final coverage/status, their intersection/disagreement
+fractions and mask-to-mask Jaccard agreement, plus the existing GrabCut diagnostics.
+Mask agreement is NOT accuracy against a ground-truth fruit mask. Its 1660 x 460
+previews show original, HSV mask, GrabCut mask, exact union mask and processed RGB.
+The hybrid trains its own Random Forest; it does not load or vote earlier models.
+See docs/HYBRID.md. No earlier runs are overwritten and original Test stays reserved.

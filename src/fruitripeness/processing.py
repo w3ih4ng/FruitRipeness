@@ -145,6 +145,17 @@ def processing_spec(method: str) -> dict:
         return {**GRABCUT_SPEC, "background_rgb": list(GRABCUT_SPEC["background_rgb"])}
     if method == "watershed":
         return {**WATERSHED_SPEC, "background_rgb": list(WATERSHED_SPEC["background_rgb"])}
+    if method == "hybrid":
+        return {
+            "version": "hybrid_hsv_grabcut_union_v1",
+            "combination": "logical OR of final cleaned HSV and GrabCut masks",
+            "post_union_cleanup": "none; reuse each component's complete cleanup exactly once",
+            "components": {name: processing_spec(name) for name in ("hsv", "grabcut")},
+            "background_rgb": [0, 0, 0],
+            "empty_mask_policy": "black image only if both component masks are empty; no image exclusion",
+            "working_size": "component masks combined at original image resolution",
+            "selection_basis": "HSV best processed accuracy; GrabCut best processed macro F1 on development validation",
+        }
     raise ValueError(f"Unsupported method: {method}")
 
 
@@ -156,6 +167,8 @@ class ProcessingResult:
     details: dict
     # Optional INITIAL marker labels at working resolution; never classification labels.
     markers: np.ndarray | None = None
+    # Final component masks for hybrid explanations; no ground-truth annotations.
+    component_masks: dict[str, np.ndarray] | None = None
 
 
 def otsu_threshold(gray: np.ndarray) -> int | None:
@@ -384,6 +397,31 @@ def process_image(image: Image.Image, method: str) -> ProcessingResult:
         mask = np.ones((rgb.height, rgb.width), dtype=bool)
         return ProcessingResult(rgb, rgb.copy(), mask,
                                 {"foreground_fraction": 1.0, "mask_status": "not_segmented"})
+    if method == "hybrid":
+        # Reuse the frozen, complete component pipelines. Do not clean the union
+        # again: it must be exactly the OR of the masks shown in the previews.
+        hsv = process_image(rgb, "hsv")
+        grabcut = process_image(rgb, "grabcut")
+        mask = hsv.mask | grabcut.mask
+        intersection = hsv.mask & grabcut.mask
+        fraction = float(mask.mean())
+        pixels = np.asarray(rgb).copy()
+        pixels[~mask] = spec["background_rgb"]
+        details = {
+            "foreground_fraction": fraction,
+            "mask_status": "empty" if fraction == 0 else "near_full" if fraction > 0.98 else "nonempty",
+            "hybrid_hsv_fraction": hsv.details["foreground_fraction"],
+            "hybrid_grabcut_fraction": grabcut.details["foreground_fraction"],
+            "hybrid_hsv_status": hsv.details["mask_status"],
+            "hybrid_grabcut_status": grabcut.details["mask_status"],
+            "hybrid_intersection_fraction": float(intersection.mean()),
+            "hybrid_disagreement_fraction": float((hsv.mask ^ grabcut.mask).mean()),
+            # This is agreement BETWEEN heuristics, not segmentation accuracy.
+            "hybrid_mask_jaccard": float(intersection.sum()/mask.sum()) if mask.any() else 1.0,
+            **{key: value for key, value in grabcut.details.items() if key.startswith("grabcut_")},
+        }
+        return ProcessingResult(rgb, Image.fromarray(pixels), mask, details,
+                                component_masks={"hsv": hsv.mask, "grabcut": grabcut.mask})
     details = {}
     markers = None
     if method == "hsv":

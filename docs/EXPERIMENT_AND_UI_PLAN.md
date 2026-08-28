@@ -3,9 +3,9 @@
 ## Current status
 
 The baseline and all five individual methods (HSV, Otsu, K-means, GrabCut and
-marker-controlled watershed) are implemented, sharing RGB features (32 x 32)
-and a Random Forest. The audit is optional, not a prerequisite. The hybrid and UI
-remain future milestones. Continue editing this repository; no replacement starter
+marker-controlled watershed), plus the HSV + GrabCut union hybrid, are implemented,
+sharing RGB features (32 x 32) and a Random Forest. The audit is optional, not a
+prerequisite. The UI is the next milestone. Continue editing this repository; no replacement starter
 folder is needed.
 
 ## Confirmed dataset policy
@@ -36,7 +36,7 @@ methods are parallel experiments, not a five-stage serial pipeline. Train a
 separate instance of the same classifier for each method, keeping shared features,
 training settings, split and random seed consistent.
 
-Implemented individual methods and the remaining hybrid milestone:
+Implemented individual methods and hybrid:
 
 | ID | Main technique | Qualification |
 |---|---|---|
@@ -45,12 +45,16 @@ Implemented individual methods and the remaining hybrid milestone:
 | kmeans | RGB K-means colour clustering (implemented) | Up to 3 clusters, fixed grid sample and seed; most common border cluster is background; shared mask cleanup |
 | grabcut | GrabCut foreground extraction (implemented) | Automatic 5% rectangle margin, max working side 160, five iterations; no manual image adjustments; shared cleanup at original resolution |
 | watershed | Marker-controlled watershed (implemented) | Otsu-derived coarse mask, per-component distance cores, automatic background seeds and colour-boundary flooding; markers shown in previews |
-| hybrid | Enhanced combined method | Specify from validation evidence, then freeze before testing |
+| hybrid | HSV + GrabCut mask union (implemented) | OR of the two complete cleaned masks; original RGB inside, black outside; no second cleanup, label-dependent choices or classifier ensemble |
 
 All five individual methods are implemented with fixed rules. Watershed uses Otsu
 only to initialise markers, then refines the mask through watershed; it is not
 identical to the Otsu branch. The uploaded images have varied backgrounds and
 multiple objects, so inspect both successful and failed examples for each method.
+The hybrid combines HSV (best processed validation accuracy) and GrabCut (best
+processed validation macro F1); the baseline still leads both metrics before the
+hybrid run. This is a validation-informed design, not an independently selected
+test result. See `docs/HYBRID.md` for its fixed rules and limitations.
 Use a raw/minimal-preprocessing baseline as a seventh EXPERIMENTAL reference; the
 requested UI still has five methods plus one hybrid. The initial fixed classifier
 is a 300-tree Random Forest with balanced class weights and seed 42, using flattened
@@ -99,7 +103,8 @@ Choose the UI framework at the implementation milestone; no framework installed 
 
 ### Evaluation view
 
-- Load measured results from the fixed test manifest. Show model version, dataset
+- Load measured validation results during development and final Test results only
+  after the frozen final evaluation. Label the split clearly. Show model version, dataset
   split ID, class support, macro F1, balanced accuracy and confusion matrices.
 - Filter by fruit; distinguish aggregate metrics from single-image predictions.
 - Export comparison figures as PNG and metrics/predictions as CSV for the report.
@@ -122,7 +127,7 @@ Choose the UI framework at the implementation milestone; no framework installed 
 1. Private GitHub repository and Python environment: completed by the user.
 2. Run the baseline on the original extracted dataset and inspect validation outputs.
 3. Baseline, HSV, Otsu, K-means and GrabCut reproduced by the user.
-4. Watershed Method 5 implemented; run and review using the same split/features/model.
-5. Develop the hybrid using validation evidence.
+4. Watershed Method 5 reproduced by the user.
+5. HSV + GrabCut union hybrid implemented; run and review with the same split/features/model.
 6. Add single-image, multiple-image and folder UI workflows with comparison/export.
 7. Freeze choices, run final original-Test comparison and produce report figures.
