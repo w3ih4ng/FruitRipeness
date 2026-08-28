@@ -3,7 +3,7 @@
 One continuing VS Code/GitHub project for a five-method image-processing comparison
 and a team hybrid. The baseline and all five individual methods (HSV, Otsu,
 K-means, GrabCut and marker-controlled watershed) and an HSV + GrabCut union
-hybrid are implemented. The UI is the next milestone.
+hybrid are implemented, with a local desktop comparison UI for images and folders.
 
 ## 1. Create the GitHub repository
 
@@ -49,7 +49,8 @@ After applying the baseline update, run:
 .\.venv\Scripts\python.exe -m fruitripeness.baseline --data data/raw
 ```
 
-Expect 55 tests after the hybrid update. The baseline fits on 3,547 images from original Train and validates
+The UI update includes 69 non-GUI tests plus 5 desktop integration tests (skipped
+when a graphical Tk display is unavailable). The baseline fits on 3,547 images from original Train and validates
 on a fixed 887-image subset; the original 180-image Test set is unchanged and not
 scored by default. Results and a model go into a new timestamped folder under
 `outputs/baseline/`. The run prints that exact path. See `docs/BASELINE.md`.
@@ -79,17 +80,27 @@ stop and share its non-sensitive error; do not force-push or recreate the folder
 Invite only approved teammates as collaborators through GitHub repository settings.
 On another laptop clone this repository and create a new .venv; do not copy .venv.
 
-## Next milestone
+## Open the comparison UI
 
-Run the hybrid and compare with your saved baseline. See `docs/HYBRID.md`.
-The earlier method commands remain supported; existing models do not need a rerun.
-This update adds no dependencies; reinstall to update project metadata.
-Use the same dataset, validation split, feature extractor and model parameters.
-`docs/EXPERIMENT_AND_UI_PLAN.md` includes single-image, multi-image and folder input,
-comparison of five methods plus hybrid, and PNG/CSV exports. This UI is not built yet.
+From this existing project folder:
+
+```powershell
+.\.venv\Scripts\python.exe -m fruitripeness.ui
+```
+
+Open **Models & runs**, review the discovered runs and confirm your team's model
+files are trusted. Then choose images/a folder and run a method or Compare all six.
+**Saved validation** loads the measured metrics and confusion matrices, including
+the baseline reference. PNG/CSV exports are available. See `docs/UI.md`.
+
+No new pip dependencies, browser server or retraining are required. Tkinter must
+be present in your Python installation; test it with `python -m tkinter` if needed.
+The original Test set stays reserved; final Test evaluation is a later milestone.
 
 The methods were tested on Python 3.12.13/Linux. The user reproduced baseline, HSV,
-Otsu, K-means, GrabCut and Watershed results on Windows; rerun the tests after each update on Windows.
+Otsu, K-means, GrabCut, Watershed and hybrid results on Windows. The UI core tests
+pass on Linux; desktop rendering could not be verified in the headless build
+environment. Run the desktop integration tests and inspect the window on Windows.
 
 ## Sources
 

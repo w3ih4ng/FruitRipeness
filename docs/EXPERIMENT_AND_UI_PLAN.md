@@ -5,7 +5,8 @@
 The baseline and all five individual methods (HSV, Otsu, K-means, GrabCut and
 marker-controlled watershed), plus the HSV + GrabCut union hybrid, are implemented,
 sharing RGB features (32 x 32) and a Random Forest. The audit is optional, not a
-prerequisite. The UI is the next milestone. Continue editing this repository; no replacement starter
+prerequisite. A local Tkinter comparison UI is implemented; verify its layout on
+the team's Windows desktop. Continue editing this repository; no replacement starter
 folder is needed.
 
 ## Confirmed dataset policy
@@ -72,15 +73,16 @@ For confidence displays, label Random Forest probability estimates as model scor
 do not imply they are calibrated probabilities. Inspect class calibration before
 presenting stronger confidence claims.
 
-## Planned local comparison UI
+## Local comparison UI
 
-The intended implementation is a local Python dashboard, not a public hosted service.
-Choose the UI framework at the implementation milestone; no framework installed yet.
+Implemented with Python Tkinter, not a public hosted service. See `docs/UI.md` for
+launch commands, file/folder selection, run selection, CSV/PNG exports, holdout
+protection and verification limitations. No web framework is installed.
 
 ### Single-image view
 
 - Upload an image, select one of five methods or hybrid, then run inference.
-- Show original image, processed image, fruit mask/overlay, predicted stage,
+- Show original image, processed image, foreground mask, predicted stage,
   class scores, preprocessing time and model prediction time.
 - Offer Compare all six: the identical input appears in a consistent six-card grid.
 - Do not show per-image accuracy when the true label is unknown. Never fabricate
@@ -92,7 +94,8 @@ Choose the UI framework at the implementation milestone; no framework installed 
 - Accept a single image, multiple selected images, or a folder of supported images.
 - Offer an explicit include-subfolders option; keep relative paths to distinguish
   files with the same name. The source images must not be changed.
-- Apply the selected method, selected subset of methods, or all six consistently.
+- Apply one selected method or all six consistently. Arbitrary subsets are not
+  included in this first UI version.
 - Show progress, successful/failed file counts and a per-image results table.
 - Handle unsupported files and per-image failures with visible messages; continue
   other valid batch images without silently suppressing failures.
@@ -128,6 +131,8 @@ Choose the UI framework at the implementation milestone; no framework installed 
 2. Run the baseline on the original extracted dataset and inspect validation outputs.
 3. Baseline, HSV, Otsu, K-means and GrabCut reproduced by the user.
 4. Watershed Method 5 reproduced by the user.
-5. HSV + GrabCut union hybrid implemented; run and review with the same split/features/model.
-6. Add single-image, multiple-image and folder UI workflows with comparison/export.
+5. HSV + GrabCut union hybrid reproduced by the user.
+6. Desktop UI implemented with single-image, multiple-image and folder workflows;
+   verify desktop layout on Windows and inspect/export results. Overlay views and
+   final-Test loading remain future additions; current evaluation is validation-only.
 7. Freeze choices, run final original-Test comparison and produce report figures.

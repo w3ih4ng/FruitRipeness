@@ -44,3 +44,10 @@ Mask agreement is NOT accuracy against a ground-truth fruit mask. Its 1660 x 460
 previews show original, HSV mask, GrabCut mask, exact union mask and processed RGB.
 The hybrid trains its own Random Forest; it does not load or vote earlier models.
 See docs/HYBRID.md. No earlier runs are overwritten and original Test stays reserved.
+
+The desktop UI reads these saved runs without retraining. It exports prediction
+CSV, displayed-image comparison PNG, validation metrics CSV and validation
+comparison/confusion-matrix PNG only when requested. Choose NEW filenames outside
+all input folders and selected run folders (for example, outputs/ui_reports/).
+Create that report folder in Explorer if desired. Existing files are never
+overwritten. UI exports under outputs/ remain ignored by Git.
