@@ -41,7 +41,8 @@ desktop integration tests require a graphical Tk display.
    **Hybrid B - HSV-seeded GrabCut** is the refined version.
    **Compare hybrid versions** runs both. Raw input is a separate reference option.
 4. Select a result row and choose **Preview selected image** to inspect it.
-5. Export predictions as CSV or the displayed comparison as PNG.
+5. Export predictions as CSV, the displayed comparison as PNG, or a combined PDF
+   report containing visual evidence and the recorded prediction table.
 
 Cards show original/processed images, masks, ripeness predictions, uncalibrated
 class scores, retained area and timing. Neither a predicted label nor mask coverage
@@ -62,7 +63,7 @@ Choose **Load selected runs** to display validation metrics and confusion matric
 from the selected classifier/runs. Filter by fruit and reload as needed.
 Comparisons reject incompatible splits or classifiers. Validation figures are
 development measurements, not final Test scores. Export the displayed scope as
-CSV or PNG; raw baseline is a reference, not another member's method.
+CSV, PNG or PDF; raw baseline is a reference, not another member's method.
 
 ## Saved final Test
 
@@ -74,7 +75,7 @@ outputs/final_test/20260828T100939_923549Z
 
 Choose the report folder, not the dataset Test folder or the model folder. This
 read-only view shows all eight variants using the one frozen CNN, checks the saved
-report and metrics checksum, and offers per-fruit/overall CSV and PNG exports.
+report and metrics checksum, and offers per-fruit/overall CSV, PNG and PDF exports.
 The full report already contains comparisons, confusion matrices, predictions
 and example PNGs under `previews/`. It neither evaluates images nor retrains.
 See [final Test protocol](FINAL_TEST.md) for formats and limitations.
@@ -90,3 +91,48 @@ Processing, input preparation and prediction times exclude disk reads, loading,
 rendering and GUI refresh. Hardware and warm-up affect them; one observation is
 not a timing benchmark. Masks remain heuristics, not annotated fruit masks.
 Keep successes, failures, validation and final Test evidence in the report.
+
+## Surface analysis
+
+The **Surface analysis** tab reuses images selected on **Images & folders**. It
+applies median denoising, contrast stretching, the selected segmentation method,
+heuristic blemish detection, contour-based object detection and pixel-based sizing.
+It does not use dataset labels or a trained classifier.
+
+For a technically valid blemish fraction, the application reports a transparent
+project quality grade: **Good** for at most 5% detected blemish area,
+**Acceptable** for above 5% through 15%, and **Poor** for above 15%. An empty or
+too-small foreground is **Not graded**, never silently treated as clean. These
+thresholds are an assignment rule rather than a biological or commercial fruit
+inspection standard because the dataset has no verified blemish masks.
+
+Surface results can be exported as CSV, the displayed evidence as PNG, or both
+measurements and visual evidence as PDF. Diameter remains in pixels because the
+dataset contains no consistent reference object of known physical size.
+
+## Camera and video
+
+The **Camera & video** tab uses the classifier selected in the top bar and one
+selected processing method. It does not train, alter the source media or read
+labels. Predictions apply to the complete frame; the displayed object boxes are
+contours from the segmentation mask, not separate per-fruit classifications.
+
+For a webcam, choose a non-negative camera index (normally `0`) and select
+**Start live camera**. The preview updates with the frame-level ripeness scores
+and detected-object count. **Capture snapshot for comparison** saves the original
+unannotated frame, selects it on **Images & folders**, and stops the camera. After
+the camera finishes closing, use **Compare all six** as for any other image.
+
+For uploaded video, choose an MP4, AVI, MOV or MKV source, then select
+**Process and export annotated video**. Choose a new MP4 or AVI filename outside
+the source and saved-model folders. Every decoded frame is processed, so slower
+methods such as K-means or GrabCut can take substantially longer than the video
+duration. The application writes to a temporary file first and only finalises the
+annotated video after successful completion. Cancelling discards that incomplete
+video while retaining completed frame rows for optional CSV export.
+
+The exported CSV records frame number, timestamp, method, prediction, three
+uncalibrated scores, timing and detected-object count. Video containers/codecs
+depend on the local OpenCV build; use MP4 first and AVI if a computer cannot create
+MP4 output. Camera permission and a camera not already occupied by another program
+are required for live mode.

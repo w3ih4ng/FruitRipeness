@@ -6,6 +6,14 @@ MobileNetV2 CNN**: a frozen pretrained backbone with a trained ripeness head.
 The earlier **Random Forest models** remain available as experimental benchmarks.
 Predictions are image-level **unripe, ripe or overripe**, not fruit-species detection.
 
+The desktop application also provides classical preprocessing and surface analysis:
+blemish percentage, a transparent heuristic quality grade, contour-based object
+detection and pixel-based size measurements. Prediction, validation, final-Test and
+surface-analysis views can be exported directly to PDF in addition to PNG/CSV.
+The **Camera & video** tab adds live frame prediction, snapshot capture for the
+existing six-method comparison, and frame-by-frame annotated MP4/AVI export with
+a CSV audit trail. These are inference features; they do not retrain the model.
+
 ## Open the application
 
 From this existing folder in the VS Code PowerShell terminal:
@@ -17,7 +25,8 @@ From this existing folder in the VS Code PowerShell terminal:
 1. Choose **CNN - MobileNetV2 (shared model)** in Classifier.
 2. Choose the training date **28 Aug 2026, 08:58:10 UTC**.
 3. Use **Images & folders** for image/folder predictions, **Saved validation** for
-   development metrics, or **Saved final Test** for the completed Test report.
+   development metrics, **Saved final Test** for the completed Test report, or
+   **Camera & video** for live/uploaded media.
 
 In **Saved final Test → Open Test report**, select:
 

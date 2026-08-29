@@ -73,7 +73,7 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(self.app.rows[0]['status'], 'ok')
 
     def test_widgets_discovery_and_missing_model_state(self):
-        self.assertEqual(len(self.app.tabs.tabs()), 4)
+        self.assertEqual(len(self.app.tabs.tabs()), 5)
         self.assertFalse(hasattr(self.app, 'models_tab'))
         self.assertFalse(hasattr(self.app, 'trust'))
         self.assertEqual(self.app.hybrid_variant.get(), 'hybrid')
@@ -85,6 +85,19 @@ class DesktopTests(unittest.TestCase):
             start.assert_called_with(['hybrid', 'hybrid_refined'])
         self.assertEqual(len(self.app.selected_runs(['hsv'])), 1)
         self.assertEqual(self.app.selected_runs(['hybrid'], required=False), [])
+        for label in [
+            'Export report PDF',
+            'Export validation PDF',
+            'Export Test PDF',
+            'Export surface PDF',
+            'Start live camera',
+            'Choose video',
+            'Process and export annotated video',
+            'Export frame results CSV',
+        ]:
+            self.assertTrue(any(b.cget('text') == label for b in self.app.buttons))
+        self.assertEqual(str(self.app.camera_stop_button.cget('state')), 'disabled')
+        self.assertEqual(str(self.app.video_process_button.cget('state')), 'disabled')
 
     def test_classifier_switch_updates_automatic_model_selection(self):
         self.app.backend.set('shared_cnn')
@@ -203,6 +216,7 @@ class DesktopTests(unittest.TestCase):
         row = self.app.surface_rows[0]
         self.assertEqual(row['status'], 'ok')
         self.assertIn(row['blemish_status'], {'graded', 'too_small_foreground'})
+        self.assertIn(row['quality_grade'], {'Good', 'Acceptable', 'Poor', 'Not graded'})
         self.assertGreaterEqual(row['objects_detected'], 1)
         self.assertTrue(self.app.surface_canvas.find_all())
         self.assertEqual(len(self.app.surface_table.get_children()), 1)

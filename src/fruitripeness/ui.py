@@ -14,6 +14,18 @@ from tkinter import filedialog, messagebox, ttk
 from PIL import Image, ImageTk
 
 from .processing import process_image
+from .pdf_export import (
+    METRICS_PDF_FIELDS,
+    PREDICTION_PDF_FIELDS,
+    SURFACE_PDF_FIELDS,
+    export_report_pdf,
+)
+from .media import (
+    VIDEO_EXTENSIONS,
+    VIDEO_RESULT_FIELDS,
+    process_video,
+    run_live_camera,
+)
 
 from .ui_core import (
     LABELS,
@@ -33,6 +45,9 @@ from .ui_core import (
     evaluation_sheet,
     export_csv,
     export_png,
+    check_destination,
+    infer,
+    load_model,
     prediction_card,
     run_batch,
     run_surface_batch,
@@ -181,6 +196,20 @@ class App:
         self.surface_source = ""
 
         # =========================================================
+        # Camera / video
+        # =========================================================
+
+        self.camera_running = False
+        self.camera_latest = None
+        self.camera_latest_row = None
+        self.video_source = None
+        self.video_output = None
+        self.video_rows = []
+        self.video_preview = None
+        self.video_protected = []
+        self.task_kind = ""
+
+        # =========================================================
         # Saved models
         # =========================================================
 
@@ -243,6 +272,22 @@ class App:
 
         self.surface_method = tk.StringVar(
             value="kmeans"
+        )
+
+        self.media_method = tk.StringVar(
+            value="hybrid_refined"
+        )
+
+        self.camera_index = tk.StringVar(
+            value="0"
+        )
+
+        self.video_note = tk.StringVar(
+            value="No video selected"
+        )
+
+        self.media_summary = tk.StringVar(
+            value="Camera and video processing are idle."
         )
 
         # =========================================================
@@ -483,6 +528,11 @@ class App:
             padding=12,
         )
 
+        self.media_tab = ttk.Frame(
+            self.tabs,
+            padding=12,
+        )
+
         self.tabs.add(
             self.input_tab,
             text="  Images & folders  ",
@@ -503,6 +553,11 @@ class App:
             text="  Surface analysis  ",
         )
 
+        self.tabs.add(
+            self.media_tab,
+            text="  Camera & video  ",
+        )
+
         # =========================================================
         # Build tabs
         # =========================================================
@@ -511,6 +566,7 @@ class App:
         self.build_evaluation()
         self.build_test_evaluation()
         self.build_surface_analysis()
+        self.build_media()
 
         # =========================================================
         # Footer
@@ -856,6 +912,12 @@ class App:
             self.save_preview,
         )
 
+        self.button(
+            bar,
+            "Export report PDF",
+            self.save_prediction_pdf,
+        )
+
         ttk.Label(
             bar,
             text="Select a result row to inspect its source or error.",
@@ -1032,6 +1094,12 @@ class App:
             self.save_evaluation,
         )
 
+        self.button(
+            controls,
+            "Export validation PDF",
+            self.save_validation_pdf,
+        )
+
         ttk.Label(
             self.eval_tab,
             text=(
@@ -1122,6 +1190,12 @@ class App:
             self.save_test_image,
         )
 
+        self.button(
+            exports,
+            "Export Test PDF",
+            self.save_test_pdf,
+        )
+
         ttk.Label(
             self.test_tab,
             textvariable=self.test_note,
@@ -1151,7 +1225,8 @@ class App:
             text=(
                 'Uses the images selected on the "Images & folders" tab. '
                 "Preprocessing (denoise + contrast stretch), "
-                "blemish/damage quantification, object detection, "
+                "blemish/damage quantification, heuristic surface-quality "
+                "grading, object detection, "
                 "and pixel-based sizing & no classifier or label involved."
             ),
             wraplength=1100,
@@ -1217,6 +1292,12 @@ class App:
             self.save_surface_preview,
         )
 
+        self.button(
+            controls,
+            "Export surface PDF",
+            self.save_surface_pdf,
+        )
+
         panes = ttk.Panedwindow(
             self.surface_tab,
             orient="vertical",
@@ -1252,6 +1333,7 @@ class App:
             "status",
             "blemish_fraction",
             "blemish_status",
+            "quality_grade",
             "objects_detected",
             "equivalent_diameter_px",
             "calibrated",
@@ -1264,6 +1346,7 @@ class App:
             "Status",
             "Blemish %",
             "Blemish status",
+            "Quality grade",
             "Objects",
             "Equiv. diameter (px)",
             "Calibrated",
@@ -1351,6 +1434,249 @@ class App:
         )
 
     # =============================================================
+    # CAMERA & VIDEO TAB
+    # =============================================================
+
+    def build_media(self):
+
+        ttk.Label(
+            self.media_tab,
+            text=(
+                "Uses the selected saved classifier and one processing method. "
+                "Camera snapshots can be sent to Images & folders for a full "
+                "six-method comparison. Uploaded videos are analysed frame by "
+                "frame and exported as a new annotated MP4 or AVI."
+            ),
+            wraplength=1150,
+        ).pack(
+            anchor="w",
+            pady=(0, 7),
+        )
+
+        method_controls = ttk.Frame(
+            self.media_tab
+        )
+
+        method_controls.pack(
+            fill="x"
+        )
+
+        ttk.Label(
+            method_controls,
+            text="Processing method:",
+        ).pack(
+            side="left",
+            padx=(0, 8),
+        )
+
+        self.media_method_box = NamedCombobox(
+            method_controls,
+            textvariable=self.media_method,
+            values=["baseline", *METHODS],
+            label=LABELS.__getitem__,
+            state="readonly",
+            width=35,
+        )
+
+        self.media_method_box.pack(
+            side="left",
+            padx=(0, 12),
+        )
+
+        ttk.Label(
+            method_controls,
+            text=(
+                "Prediction is for the complete frame; object boxes come "
+                "from the selected segmentation mask."
+            ),
+            wraplength=650,
+        ).pack(
+            side="left",
+        )
+
+        camera_controls = ttk.Frame(
+            self.media_tab
+        )
+
+        camera_controls.pack(
+            fill="x",
+            pady=(5, 0),
+        )
+
+        ttk.Label(
+            camera_controls,
+            text="Camera index:",
+        ).pack(
+            side="left",
+            padx=(0, 8),
+        )
+
+        self.camera_index_box = ttk.Spinbox(
+            camera_controls,
+            from_=0,
+            to=9,
+            textvariable=self.camera_index,
+            width=5,
+        )
+
+        self.camera_index_box.pack(
+            side="left",
+            padx=(0, 10),
+        )
+
+        self.camera_start_button = self.button(
+            camera_controls,
+            "Start live camera",
+            self.start_camera,
+            accent=True,
+        )
+
+        self.camera_stop_button = self.button(
+            camera_controls,
+            "Stop camera",
+            self.stop_camera,
+        )
+
+        self.camera_snapshot_button = self.button(
+            camera_controls,
+            "Capture snapshot for comparison",
+            self.capture_camera_snapshot,
+        )
+
+        video_controls = ttk.Frame(
+            self.media_tab
+        )
+
+        video_controls.pack(
+            fill="x",
+            pady=(3, 0),
+        )
+
+        self.video_choose_button = self.button(
+            video_controls,
+            "Choose video",
+            self.choose_video,
+        )
+
+        self.video_process_button = self.button(
+            video_controls,
+            "Process and export annotated video",
+            self.start_video,
+            accent=True,
+        )
+
+        self.video_csv_button = self.button(
+            video_controls,
+            "Export frame results CSV",
+            self.save_video_csv,
+        )
+
+        ttk.Label(
+            self.media_tab,
+            textvariable=self.video_note,
+            wraplength=1120,
+        ).pack(
+            anchor="w",
+            pady=(2, 2),
+        )
+
+        ttk.Label(
+            self.media_tab,
+            textvariable=self.media_summary,
+            wraplength=1120,
+        ).pack(
+            anchor="w",
+            pady=(0, 5),
+        )
+
+        panes = ttk.Panedwindow(
+            self.media_tab,
+            orient="vertical",
+        )
+
+        panes.pack(
+            fill="both",
+            expand=True,
+        )
+
+        preview_frame, self.media_canvas = (
+            self.scroll_image(panes)
+        )
+
+        panes.add(
+            preview_frame,
+            weight=3,
+        )
+
+        table_frame = ttk.Frame(
+            panes
+        )
+
+        panes.add(
+            table_frame,
+            weight=2,
+        )
+
+        columns = [
+            "frame_index",
+            "timestamp_seconds",
+            "predicted_stage",
+            "score_unripe",
+            "score_ripe",
+            "score_overripe",
+            "objects_detected",
+            "processing_ms",
+        ]
+
+        headings = [
+            "Frame",
+            "Time (s)",
+            "Prediction",
+            "Unripe",
+            "Ripe",
+            "Overripe",
+            "Objects",
+            "Process ms",
+        ]
+
+        self.video_table = ttk.Treeview(
+            table_frame,
+            columns=columns,
+            show="headings",
+            height=5,
+            selectmode="browse",
+        )
+
+        for name, heading in zip(columns, headings):
+            self.video_table.heading(name, text=heading)
+            self.video_table.column(name, width=120, stretch=False)
+
+        ybar = ttk.Scrollbar(
+            table_frame,
+            orient="vertical",
+            command=self.video_table.yview,
+        )
+
+        xbar = ttk.Scrollbar(
+            table_frame,
+            orient="horizontal",
+            command=self.video_table.xview,
+        )
+
+        self.video_table.configure(
+            yscrollcommand=ybar.set,
+            xscrollcommand=xbar.set,
+        )
+
+        table_frame.columnconfigure(0, weight=1)
+        table_frame.rowconfigure(0, weight=1)
+        self.video_table.grid(row=0, column=0, sticky="nsew")
+        ybar.grid(row=0, column=1, sticky="ns")
+        xbar.grid(row=1, column=0, sticky="ew")
+
+        self.sync_media_controls()
+
+    # =============================================================
     # SURFACE ANALYSIS
     # =============================================================
 
@@ -1403,7 +1729,8 @@ class App:
                     emit=lambda kind, value: emit(
                         ("surface_" + kind, value)
                     ),
-                )
+                ),
+                kind="surface",
             )
 
         except Exception as exc:
@@ -1486,6 +1813,330 @@ class App:
 
                 self.status.set(
                     f"Exported surface preview: {path}"
+                )
+
+        except Exception as exc:
+            self.error(exc)
+
+    def save_surface_pdf(self):
+
+        try:
+
+            if not self.surface_rows:
+                raise ValueError(
+                    "Run surface analysis first."
+                )
+
+            path = self.destination(
+                "Export surface-analysis PDF; choose a NEW filename",
+                ".pdf",
+            )
+
+            if path:
+
+                export_report_pdf(
+                    Path(path),
+                    title="Fruit Surface Analysis Report",
+                    rows=self.surface_rows,
+                    fields=SURFACE_PDF_FIELDS,
+                    image=self.surface_preview,
+                    protected=self.protected,
+                    labels=LABELS,
+                    notes=[
+                        "Quality grade is a project heuristic: Good up to 5%, "
+                        "Acceptable above 5% up to 15%, and Poor above 15% "
+                        "detected blemish area.",
+                        "Blemish masks are not ground-truth annotations. "
+                        "Fruit size is reported in pixels only.",
+                    ],
+                )
+
+                self.status.set(
+                    f"Exported surface-analysis PDF: {path}"
+                )
+
+        except Exception as exc:
+            self.error(exc)
+
+    # =============================================================
+    # CAMERA & VIDEO
+    # =============================================================
+
+    def sync_media_controls(self):
+
+        if not hasattr(self, "camera_start_button"):
+            return
+
+        if self.camera_running:
+            self.camera_start_button.configure(state="disabled")
+            self.camera_stop_button.configure(state="normal")
+            self.camera_snapshot_button.configure(
+                state=(
+                    "normal"
+                    if self.camera_latest is not None
+                    else "disabled"
+                )
+            )
+            self.video_choose_button.configure(state="disabled")
+            self.video_process_button.configure(state="disabled")
+            self.video_csv_button.configure(state="disabled")
+            self.camera_index_box.configure(state="disabled")
+            self.media_method_box.configure(state="disabled")
+            return
+
+        if self.busy:
+            for button in [
+                self.camera_start_button,
+                self.camera_stop_button,
+                self.camera_snapshot_button,
+                self.video_choose_button,
+                self.video_process_button,
+                self.video_csv_button,
+            ]:
+                button.configure(state="disabled")
+            self.camera_index_box.configure(state="disabled")
+            self.media_method_box.configure(state="disabled")
+            return
+
+        self.camera_start_button.configure(state="normal")
+        self.camera_stop_button.configure(state="disabled")
+        self.camera_snapshot_button.configure(state="disabled")
+        self.video_choose_button.configure(state="normal")
+        self.video_process_button.configure(
+            state=("normal" if self.video_source else "disabled")
+        )
+        self.video_csv_button.configure(
+            state=("normal" if self.video_rows else "disabled")
+        )
+        self.camera_index_box.configure(state="normal")
+        self.media_method_box.configure(state="readonly")
+
+    def _media_prediction_task(self, run):
+
+        bundle, _ = load_model(
+            run,
+            trusted=True,
+        )
+
+        return lambda image: infer(
+            image,
+            bundle,
+        )
+
+    def start_camera(self):
+
+        if self.busy:
+            return
+
+        try:
+            camera_index = int(self.camera_index.get())
+            if camera_index < 0:
+                raise ValueError(
+                    "Camera index must be zero or greater."
+                )
+
+            method = self.media_method.get()
+            run = self.selected_runs([method])[0]
+            self.camera_latest = None
+            self.camera_latest_row = None
+            self.camera_running = True
+            self.media_summary.set(
+                "Opening camera and loading the selected model..."
+            )
+            self.media_canvas.delete("all")
+
+            def task(emit):
+                predict = self._media_prediction_task(run)
+                run_live_camera(
+                    camera_index,
+                    predict=predict,
+                    method=method,
+                    method_label=LABELS[method],
+                    cancel=self.cancel,
+                    emit=lambda kind, value: emit((kind, value)),
+                )
+
+            self.launch(
+                task,
+                kind="camera",
+            )
+            self.sync_media_controls()
+
+        except Exception as exc:
+            self.camera_running = False
+            self.sync_media_controls()
+            self.error(exc)
+
+    def stop_camera(self):
+
+        if self.camera_running:
+            self.cancel.set()
+            self.status.set(
+                "Stopping camera after the current frame..."
+            )
+
+    def capture_camera_snapshot(self):
+
+        try:
+            if self.camera_latest is None:
+                raise ValueError(
+                    "Wait for the first analysed camera frame."
+                )
+
+            path = self.destination(
+                "Save camera snapshot for image comparison",
+                ".png",
+            )
+
+            if path:
+                target = Path(path)
+                export_png(
+                    target,
+                    self.camera_latest,
+                    [],
+                )
+                self.set_inputs([target])
+                self.tabs.select(self.input_tab)
+                self.cancel.set()
+                self.status.set(
+                    "Snapshot saved and selected. Wait for the camera "
+                    "to stop, then choose Compare all six."
+                )
+
+        except Exception as exc:
+            self.error(exc)
+
+    def choose_video(self):
+
+        if self.busy:
+            return
+
+        path = filedialog.askopenfilename(
+            parent=self.root,
+            title="Choose a video",
+            filetypes=[
+                ("Supported videos", "*.mp4 *.avi *.mov *.mkv"),
+                ("All files", "*.*"),
+            ],
+        )
+
+        if path:
+            selected = Path(path).resolve()
+            if (
+                not selected.is_file()
+                or selected.suffix.lower() not in VIDEO_EXTENSIONS
+            ):
+                self.error(
+                    "Choose an existing MP4, AVI, MOV or MKV video."
+                )
+                return
+            self.video_source = selected
+            self.video_note.set(
+                f"Selected video: {selected}"
+            )
+            self.video_rows = []
+            self.video_output = None
+            self.video_preview = None
+            self.video_table.delete(
+                *self.video_table.get_children()
+            )
+            self.sync_media_controls()
+
+    def start_video(self):
+
+        if self.busy:
+            return
+
+        try:
+            if not self.video_source:
+                raise ValueError(
+                    "Choose a video first."
+                )
+
+            method = self.media_method.get()
+            run = self.selected_runs([method])[0]
+            path = filedialog.asksaveasfilename(
+                parent=self.root,
+                title=(
+                    "Export annotated video; choose a NEW filename "
+                    "outside the source and model folders"
+                ),
+                defaultextension=".mp4",
+                filetypes=[
+                    ("MP4 video", "*.mp4"),
+                    ("AVI video", "*.avi"),
+                ],
+            )
+
+            if not path:
+                return
+
+            output = check_destination(
+                Path(path),
+                [
+                    self.video_source.parent,
+                    run.path,
+                ],
+            )
+
+            self.video_rows = []
+            self.video_output = None
+            self.video_preview = None
+            self.video_protected = [
+                self.video_source.parent,
+                run.path,
+            ]
+            self.video_table.delete(
+                *self.video_table.get_children()
+            )
+            self.media_canvas.delete("all")
+            self.progress.configure(value=0, maximum=1)
+            self.media_summary.set(
+                "Loading the selected model and opening the video..."
+            )
+
+            def task(emit):
+                predict = self._media_prediction_task(run)
+                process_video(
+                    self.video_source,
+                    output,
+                    predict=predict,
+                    method=method,
+                    method_label=LABELS[method],
+                    cancel=self.cancel,
+                    emit=lambda kind, value: emit((kind, value)),
+                )
+
+            self.launch(
+                task,
+                kind="video",
+            )
+
+        except Exception as exc:
+            self.error(exc)
+
+    def save_video_csv(self):
+
+        try:
+            if not self.video_rows:
+                raise ValueError(
+                    "Process a video before exporting frame results."
+                )
+
+            path = self.destination(
+                "Export frame-level video results CSV",
+                ".csv",
+            )
+
+            if path:
+                export_csv(
+                    Path(path),
+                    self.video_rows,
+                    VIDEO_RESULT_FIELDS,
+                    self.video_protected,
+                )
+                self.status.set(
+                    f"Exported frame-level video results: {path}"
                 )
 
         except Exception as exc:
@@ -1687,6 +2338,51 @@ class App:
 
                 self.status.set(
                     f"Exported final-Test comparison: {path}"
+                )
+
+        except Exception as exc:
+            self.error(exc)
+
+    def save_test_pdf(self):
+
+        try:
+
+            if not self.test_rows or self.test_image is None:
+                raise ValueError(
+                    "Open a completed final-Test report first"
+                )
+
+            path = self.destination(
+                "Export displayed final-Test PDF",
+                ".pdf",
+            )
+
+            if path:
+
+                export_report_pdf(
+                    Path(path),
+                    title=(
+                        "Frozen Final-Test Comparison - "
+                        f"{self.test_scope.get()}"
+                    ),
+                    rows=self.test_rows,
+                    fields=METRICS_PDF_FIELDS,
+                    image=self.test_image,
+                    protected=[
+                        *self.protected,
+                        *self.test_protected,
+                    ],
+                    labels=LABELS,
+                    notes=[
+                        "All displayed methods use the checkpoint recorded "
+                        "in the completed final-Test report.",
+                        "This export reads saved measurements only; it does "
+                        "not retrain or evaluate the model.",
+                    ],
+                )
+
+                self.status.set(
+                    f"Exported final-Test PDF: {path}"
                 )
 
         except Exception as exc:
@@ -2180,6 +2876,7 @@ class App:
             self.scope_box,
             self.test_scope_box,
             self.surface_method_box,
+            self.media_method_box,
         ]:
             box.configure(
                 state=(
@@ -2206,14 +2903,18 @@ class App:
         )
 
         self.sync_classifier_controls()
+        self.sync_media_controls()
 
     def launch(
         self,
         task,
+        *,
+        kind="prediction",
     ):
 
         self.cancel.clear()
         self.worker_error = ""
+        self.task_kind = kind
 
         self.set_busy(
             True
@@ -2330,10 +3031,20 @@ class App:
 
         self.cancel.set()
 
-        self.status.set(
-            "Cancelling after the current model/image "
-            "operation; completed rows will remain exportable."
-        )
+        if self.task_kind == "camera":
+            message = "Stopping camera after the current frame..."
+        elif self.task_kind == "video":
+            message = (
+                "Cancelling after the current frame; the incomplete video "
+                "will be discarded and completed frame rows retained."
+            )
+        else:
+            message = (
+                "Cancelling after the current model/image operation; "
+                "completed rows will remain exportable."
+            )
+
+        self.status.set(message)
 
     # =============================================================
     # EVENT LOOP
@@ -2450,6 +3161,7 @@ class App:
                             "status",
                             "blemish_fraction",
                             "blemish_status",
+                            "quality_grade",
                             "objects_detected",
                             "equivalent_diameter_px",
                             "calibrated",
@@ -2471,11 +3183,11 @@ class App:
                         )
 
                     if isinstance(
-                        values[6],
+                        values[7],
                         float,
                     ):
-                        values[6] = (
-                            f"{values[6]:.1f}"
+                        values[7] = (
+                            f"{values[7]:.1f}"
                         )
 
                     self.surface_table.insert(
@@ -2539,6 +3251,95 @@ class App:
                     )
 
                 # -------------------------------------------------
+                # Live camera frame
+                # -------------------------------------------------
+
+                elif kind == "camera_frame":
+
+                    self.camera_latest = value["original"]
+                    self.camera_latest_row = value
+
+                    width = min(
+                        1180,
+                        max(700, self.media_canvas.winfo_width() - 20),
+                    )
+
+                    self.display(
+                        self.media_canvas,
+                        value["annotated"],
+                        width,
+                    )
+
+                    self.media_summary.set(
+                        f"Live frame {value['frame_index']} | "
+                        f"{value['predicted_stage'].upper()} | "
+                        f"unripe {value['score_unripe']:.1%}, "
+                        f"ripe {value['score_ripe']:.1%}, "
+                        f"overripe {value['score_overripe']:.1%} | "
+                        f"{value['objects_detected']} object(s)"
+                    )
+                    self.status.set(
+                        "Live camera is running. Capture the current "
+                        "original frame or stop the camera."
+                    )
+                    self.sync_media_controls()
+
+                # -------------------------------------------------
+                # Uploaded-video frame
+                # -------------------------------------------------
+
+                elif kind == "video_frame":
+
+                    row, annotated, total = value
+                    self.video_rows.append(row)
+                    self.video_preview = annotated
+
+                    values = [
+                        row["frame_index"],
+                        f"{row['timestamp_seconds']:.2f}",
+                        row["predicted_stage"],
+                        f"{row['score_unripe']:.1%}",
+                        f"{row['score_ripe']:.1%}",
+                        f"{row['score_overripe']:.1%}",
+                        row["objects_detected"],
+                        f"{row['processing_ms']:.1f}",
+                    ]
+
+                    self.video_table.insert(
+                        "",
+                        "end",
+                        iid=str(len(self.video_rows) - 1),
+                        values=values,
+                    )
+                    self.video_table.see(str(len(self.video_rows) - 1))
+
+                    width = min(
+                        1180,
+                        max(700, self.media_canvas.winfo_width() - 20),
+                    )
+                    self.display(self.media_canvas, annotated, width)
+
+                    completed = row["frame_index"]
+                    maximum = total if total > 0 else completed
+                    self.progress.configure(
+                        value=completed,
+                        maximum=max(1, maximum),
+                    )
+                    total_text = str(total) if total > 0 else "unknown"
+                    self.media_summary.set(
+                        f"Processed frame {completed}/{total_text} | "
+                        f"{row['predicted_stage'].upper()} | "
+                        f"{row['objects_detected']} object(s)"
+                    )
+
+                elif kind == "video_completed":
+
+                    self.video_output = Path(value)
+                    self.video_note.set(
+                        f"Annotated video saved: {self.video_output}"
+                    )
+
+                # -------------------------------------------------
                 # General status
                 # -------------------------------------------------
 
@@ -2590,23 +3391,62 @@ class App:
 
                 elif kind == "done":
 
+                    completed_kind = self.task_kind
+                    self.task_kind = ""
+
+                    if completed_kind == "camera":
+                        self.camera_running = False
+
                     self.set_busy(
                         False
-                    )
-
-                    failed = sum(
-                        r["status"] != "ok"
-                        for r in self.rows
                     )
 
                     if self.worker_error:
 
                         self.status.set(
-                            f"Failed: {self.worker_error} | "
-                            "Completed rows remain exportable."
+                            f"Failed: {self.worker_error}"
+                        )
+
+                    elif completed_kind == "camera":
+
+                        self.status.set(
+                            "Camera stopped. The latest captured frame "
+                            "remains available until another media run."
+                        )
+
+                    elif completed_kind == "video":
+
+                        if self.cancel.is_set():
+                            self.status.set(
+                                "Video processing cancelled; the incomplete "
+                                "video was discarded. Completed frame rows "
+                                "remain exportable."
+                            )
+                        else:
+                            self.status.set(
+                                f"Finished video processing | "
+                                f"{len(self.video_rows)} frames | "
+                                f"saved to {self.video_output}"
+                            )
+
+                    elif completed_kind == "surface":
+
+                        failed = sum(
+                            r["status"] != "ok"
+                            for r in self.surface_rows
+                        )
+                        self.status.set(
+                            f"{'Cancelled; partial results' if self.cancel.is_set() else 'Finished'} | "
+                            f"{len(self.surface_rows) - failed} successful "
+                            f"surface results | {failed} errors."
                         )
 
                     else:
+
+                        failed = sum(
+                            r["status"] != "ok"
+                            for r in self.rows
+                        )
 
                         self.status.set(
                             f"{'Cancelled; partial results' if self.cancel.is_set() else 'Finished'} | "
@@ -2615,6 +3455,8 @@ class App:
                             f"{failed} errors/blocked. "
                             "Select a row to inspect."
                         )
+
+                    self.sync_media_controls()
 
                     if self.closing:
 
@@ -2988,6 +3830,53 @@ class App:
         except Exception as exc:
             self.error(exc)
 
+    def save_prediction_pdf(self):
+
+        try:
+
+            if not self.rows:
+                raise ValueError(
+                    "No prediction rows to export."
+                )
+
+            image = None
+
+            if self.cards:
+                image = comparison_sheet(
+                    self.card_source,
+                    list(self.cards.values()),
+                )
+
+            path = self.destination(
+                "Export prediction report PDF; choose a NEW filename",
+                ".pdf",
+            )
+
+            if path:
+
+                export_report_pdf(
+                    Path(path),
+                    title="Fruit Ripeness Prediction Report",
+                    rows=self.rows,
+                    fields=PREDICTION_PDF_FIELDS,
+                    image=image,
+                    protected=self.result_protected,
+                    labels=LABELS,
+                    notes=[
+                        "Predictions are image-level unripe, ripe or "
+                        "overripe classifications.",
+                        "Class scores are uncalibrated. The visual evidence "
+                        "shows the currently displayed source image.",
+                    ],
+                )
+
+                self.status.set(
+                    f"Exported prediction PDF: {path}"
+                )
+
+        except Exception as exc:
+            self.error(exc)
+
     def save_metrics(self):
 
         try:
@@ -3048,6 +3937,51 @@ class App:
 
                 self.status.set(
                     f"Exported validation comparison: {path}"
+                )
+
+        except Exception as exc:
+            self.error(exc)
+
+    def save_validation_pdf(self):
+
+        try:
+
+            if not self.eval_rows or self.eval_image is None:
+                raise ValueError(
+                    "Load validation results first."
+                )
+
+            path = self.destination(
+                "Export displayed validation PDF",
+                ".pdf",
+            )
+
+            if path:
+
+                export_report_pdf(
+                    Path(path),
+                    title=(
+                        "Validation Comparison - "
+                        f"{self.scope.get()}"
+                    ),
+                    rows=self.eval_rows,
+                    fields=METRICS_PDF_FIELDS,
+                    image=self.eval_image,
+                    protected=[
+                        *self.protected,
+                        *self.eval_protected,
+                    ],
+                    labels=LABELS,
+                    notes=[
+                        "These are development validation measurements, "
+                        "not final-Test performance.",
+                        "The baseline is a reference input and the hybrid "
+                        "variants are separate experiments.",
+                    ],
+                )
+
+                self.status.set(
+                    f"Exported validation PDF: {path}"
                 )
 
         except Exception as exc:
