@@ -13,6 +13,9 @@ import numpy as np
 
 from .audit import write_csv
 from .baseline import assign_splits, collect_records, resolve_dataset_root, train_baseline
+from .blemish import BLEMISH_SPEC, blemish_map
+from .calibration import measure as calibrate_mask
+from .object_detection import detect_objects, draw_detections
 from .processing import process_image, processing_spec
 
 METHOD_LABELS = {"hsv": "Method 1 - HSV", "otsu": "Method 2 - Otsu", "kmeans": "Method 3 - K-means",
@@ -71,6 +74,31 @@ def compare_runs(baseline_run: Path, method_run: Path) -> dict:
     }
     (Path(method_run)/"comparison_validation.json").write_text(json.dumps(comparison,indent=2),encoding="utf-8")
     return comparison
+
+
+def surface_overlay(image: Image.Image, method: str) -> tuple[Image.Image, dict]:
+    """Blemish + bounding-box overlay and stats, independent of render_preview's frozen panels.
+
+    Reuses the same segmentation call render_preview makes (same method, same spec), so this
+    reflects exactly the mask that method produced for this image; it does not re-derive a
+    different mask.
+    """
+    segmentation = process_image(image, method)
+    blemish_pixels_mask, details = blemish_map(segmentation.processed, segmentation.mask, BLEMISH_SPEC)
+    foreground_pixels = int(segmentation.mask.sum())
+    graded = details["blemish_status"] == "graded"
+    fraction = (int(blemish_pixels_mask.sum())/foreground_pixels) if graded else None
+    objects = detect_objects(segmentation.mask)
+    calibration = calibrate_mask(segmentation.mask) if segmentation.mask.any() else None
+    pixels = np.asarray(segmentation.original.convert("RGB")).copy()
+    pixels[blemish_pixels_mask] = [255, 40, 40]
+    overlay = draw_detections(Image.fromarray(pixels), objects)
+    stats = {"foreground_pixels": foreground_pixels, "blemish_pixels": int(blemish_pixels_mask.sum()),
+            "blemish_fraction": "" if fraction is None else round(fraction, 6),
+            "blemish_status": details["blemish_status"], "objects_detected": len(objects),
+            "largest_area_px": objects[0].area_px if objects else 0,
+            "equivalent_diameter_px": round(calibration.equivalent_diameter_px, 2) if calibration else ""}
+    return overlay, stats
 
 
 def render_preview(image: Image.Image, title: str, footer: str, *, method: str = "hsv") -> Image.Image:
@@ -156,6 +184,8 @@ def export_previews(data_root: Path, method_run: Path) -> int:
             selected.append((row,"additional_failure")); paths.add(row["path"]); added += 1
     output = method_run/"previews"
     output.mkdir(exist_ok=False)
+    surface_dir = output/"surface"
+    surface_dir.mkdir()
     index = []
     root = Path(data_root).resolve()
     for i, (row, reason) in enumerate(selected, 1):
@@ -171,10 +201,16 @@ def export_previews(data_root: Path, method_run: Path) -> int:
         title = f"{METHOD_LABELS[method]} | Truth: {row['true_stage']} | Predicted: {row['predicted_stage']}"
         with Image.open(source) as image:
             preview = render_preview(image, title, row["path"], method=method)
-        preview.save(output/name)
-        index.append({"file":name,"source":row["path"],"selection":reason,
-                      "true_stage":row["true_stage"],"predicted_stage":row["predicted_stage"]})
-    write_csv(output/"index.csv",index,["file","source","selection","true_stage","predicted_stage"])
+            preview.save(output/name)
+            surface_image, surface_stats = surface_overlay(image, method)
+            surface_image.save(surface_dir/name)
+        index.append({"file": name, "source": row["path"], "selection": reason,
+                      "true_stage": row["true_stage"], "predicted_stage": row["predicted_stage"],
+                      "surface_file": f"surface/{name}", **surface_stats})
+    write_csv(output/"index.csv", index,
+             ["file", "source", "selection", "true_stage", "predicted_stage", "surface_file",
+              "foreground_pixels", "blemish_pixels", "blemish_fraction", "blemish_status",
+              "objects_detected", "largest_area_px", "equivalent_diameter_px"])
     return len(index)
 
 

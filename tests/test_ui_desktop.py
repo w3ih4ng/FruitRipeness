@@ -73,7 +73,7 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(self.app.rows[0]['status'], 'ok')
 
     def test_widgets_discovery_and_missing_model_state(self):
-        self.assertEqual(len(self.app.tabs.tabs()), 3)
+        self.assertEqual(len(self.app.tabs.tabs()), 4)
         self.assertFalse(hasattr(self.app, 'models_tab'))
         self.assertFalse(hasattr(self.app, 'trust'))
         self.assertEqual(self.app.hybrid_variant.get(), 'hybrid')
@@ -192,6 +192,34 @@ class DesktopTests(unittest.TestCase):
             with patch.object(self.app,'destination',return_value=str(target)):
                 self.app.save_test_metrics()
             self.assertIn('test',target.read_text(encoding='utf-8-sig'))
+        self.assertFalse(self.errors)
+
+    def test_surface_tab_analyzes_without_needing_a_saved_model(self):
+        self.app.set_inputs([self.sample])
+        self.app.start_surface()
+        self.wait_worker()
+        self.assertFalse(self.errors)
+        self.assertEqual(len(self.app.surface_rows), 1)
+        row = self.app.surface_rows[0]
+        self.assertEqual(row['status'], 'ok')
+        self.assertIn(row['blemish_status'], {'graded', 'too_small_foreground'})
+        self.assertGreaterEqual(row['objects_detected'], 1)
+        self.assertTrue(self.app.surface_canvas.find_all())
+        self.assertEqual(len(self.app.surface_table.get_children()), 1)
+
+    def test_surface_report_exports_and_source_unchanged(self):
+        before = self.sample.read_bytes()
+        self.app.set_inputs([self.sample])
+        self.app.start_surface()
+        self.wait_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(self.app, 'destination', return_value=str(Path(tmp)/'surface.csv')):
+                self.app.save_surface_results()
+            with patch.object(self.app, 'destination', return_value=str(Path(tmp)/'surface.png')):
+                self.app.save_surface_preview()
+            self.assertIn('blemish_fraction', (Path(tmp)/'surface.csv').read_text(encoding='utf-8-sig'))
+            self.assertTrue((Path(tmp)/'surface.png').is_file())
+        self.assertEqual(self.sample.read_bytes(), before)
         self.assertFalse(self.errors)
 
 
