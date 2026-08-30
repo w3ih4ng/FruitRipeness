@@ -6,7 +6,13 @@ import unittest
 from PIL import Image, ImageDraw
 import numpy as np
 
-from fruitripeness.blemish import BLEMISH_SPEC, blemish_report, detect_blemishes
+from fruitripeness.blemish import (
+    BLEMISH_SPEC,
+    SURFACE_QUALITY_SPEC,
+    blemish_report,
+    detect_blemishes,
+    surface_quality_grade,
+)
 
 
 def apple_with_bruise(bruise: bool) -> Image.Image:
@@ -37,6 +43,26 @@ def apple_with_leaf() -> Image.Image:
 
 
 class BlemishTests(unittest.TestCase):
+    def test_surface_quality_grade_boundaries_are_explicit(self):
+        self.assertEqual(surface_quality_grade(0.00), "Good")
+        self.assertEqual(
+            surface_quality_grade(SURFACE_QUALITY_SPEC["good_max_fraction"]),
+            "Good",
+        )
+        self.assertEqual(surface_quality_grade(0.051), "Acceptable")
+        self.assertEqual(
+            surface_quality_grade(SURFACE_QUALITY_SPEC["acceptable_max_fraction"]),
+            "Acceptable",
+        )
+        self.assertEqual(surface_quality_grade(0.151), "Poor")
+        self.assertEqual(surface_quality_grade(None), "Not graded")
+        self.assertEqual(
+            surface_quality_grade(0.01, status="too_small_foreground"),
+            "Not graded",
+        )
+        with self.assertRaises(ValueError):
+            surface_quality_grade(1.01)
+
     def test_clean_fruit_has_near_zero_blemish_fraction(self):
         result = detect_blemishes(apple_with_bruise(False))
         self.assertEqual(result.status, "graded")
@@ -97,6 +123,12 @@ class BlemishTests(unittest.TestCase):
             self.assertGreaterEqual(summary["graded_images"], 1)
             self.assertTrue((Path(tmp) / "out" / "blemish_report.csv").is_file())
             self.assertTrue((Path(tmp) / "out" / "summary.json").is_file())
+            self.assertIn(
+                "quality_grade",
+                (Path(tmp) / "out" / "blemish_report.csv").read_text(
+                    encoding="utf-8-sig"
+                ),
+            )
             with self.assertRaisesRegex(ValueError, "outside"):
                 blemish_report(root, root / "report", split="train")
 

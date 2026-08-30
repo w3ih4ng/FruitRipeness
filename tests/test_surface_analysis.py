@@ -23,6 +23,7 @@ class AnalyzeSurfaceTests(unittest.TestCase):
         """Regression: chaining full contrast-stretch into blemish grading zeroed the signal out."""
         details, _, _, _ = analyze_surface(apple(True))
         self.assertGreater(details["blemish_fraction"], 0.02)
+        self.assertIn(details["quality_grade"], {"Good", "Acceptable", "Poor"})
         clean_details, _, _, _ = analyze_surface(apple(False))
         self.assertLess(clean_details["blemish_fraction"], 0.01)
 
@@ -54,8 +55,9 @@ class RunSurfaceBatchTests(unittest.TestCase):
             self.assertEqual(rows[0]["status"], "error")
             self.assertEqual(rows[1]["status"], "ok")
             self.assertGreater(rows[1]["blemish_fraction"], 0)
+            self.assertIn(rows[1]["quality_grade"], {"Good", "Acceptable", "Poor"})
             self.assertTrue(all(field in SURFACE_RESULT_FIELDS for field in
-                               ["blemish_fraction", "objects_detected", "equivalent_diameter_px"]))
+                               ["blemish_fraction", "quality_grade", "objects_detected", "equivalent_diameter_px"]))
             progress = [v for k, v in events if k == "progress"]
             self.assertEqual(progress[-1], (2, 2))
 

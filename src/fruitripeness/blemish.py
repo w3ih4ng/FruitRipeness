@@ -89,6 +89,46 @@ BLEMISH_SPEC = {
 }
 
 
+# These thresholds are a transparent project grading rule, not a biological
+# or commercial standard. The dataset contains no verified surface-damage
+# annotations from which a validated quality scale could be learned.
+SURFACE_QUALITY_SPEC = {
+    "version": "blemish_fraction_grade_v1",
+    "good_max_fraction": 0.05,
+    "acceptable_max_fraction": 0.15,
+    "labels": ["Good", "Acceptable", "Poor", "Not graded"],
+    "basis": "detected blemish pixels / detected fruit foreground pixels",
+    "limitation": "heuristic project grade; not a commercial inspection standard",
+}
+
+
+def surface_quality_grade(
+    blemish_fraction: float | None,
+    *,
+    status: str = "graded",
+    spec: dict | None = None,
+) -> str:
+    """Convert a valid blemish fraction into a documented project grade."""
+
+    spec = spec or SURFACE_QUALITY_SPEC
+
+    if status != "graded" or blemish_fraction is None:
+        return "Not graded"
+
+    fraction = float(blemish_fraction)
+
+    if not np.isfinite(fraction) or not 0.0 <= fraction <= 1.0:
+        raise ValueError("blemish_fraction must be between 0 and 1")
+
+    if fraction <= float(spec["good_max_fraction"]):
+        return "Good"
+
+    if fraction <= float(spec["acceptable_max_fraction"]):
+        return "Acceptable"
+
+    return "Poor"
+
+
 # ================================================================
 # RESULT
 # ================================================================
@@ -1069,6 +1109,12 @@ def blemish_report(
                         )
                     ),
 
+                "quality_grade":
+                    surface_quality_grade(
+                        result.blemish_fraction,
+                        status=result.status,
+                    ),
+
                 "blemish_components":
                     result.details.get(
                         "kept_components",
@@ -1136,6 +1182,7 @@ def blemish_report(
             "foreground_pixels",
             "blemish_pixels",
             "blemish_fraction",
+            "quality_grade",
             "blemish_components",
             "stem_cavity_removed",
             "status",
@@ -1189,6 +1236,9 @@ def blemish_report(
 
         "spec":
             BLEMISH_SPEC,
+
+        "surface_quality_spec":
+            SURFACE_QUALITY_SPEC,
 
         "images":
             len(rows),
@@ -1345,4 +1395,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

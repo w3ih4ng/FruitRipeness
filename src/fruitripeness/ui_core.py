@@ -31,6 +31,7 @@ from .blemish import (
     BlemishResult,
     blemish_map,
     blemish_overlay,
+    surface_quality_grade,
 )
 from .calibration import measure as calibrate_mask
 from .experiment import METHOD_LABELS
@@ -128,6 +129,7 @@ RESULT_FIELDS = [
 
 METRIC_FIELDS = [
     "method",
+    "backend",
     "run",
     "split",
     "split_id",
@@ -142,7 +144,14 @@ METRIC_FIELDS = [
 
 RESULT_FIELDS.append("backend")
 
-METRIC_VALUE_FIELDS = METRIC_FIELDS[5:].copy()
+METRIC_VALUE_FIELDS = [
+    "n_images",
+    "accuracy",
+    "balanced_accuracy",
+    "macro_precision",
+    "macro_recall",
+    "macro_f1",
+]
 
 CURRENT_VERSIONS = {
     "numpy": np.__version__,
@@ -1552,6 +1561,7 @@ SURFACE_RESULT_FIELDS = [
     "blemish_pixels",
     "blemish_fraction",
     "blemish_status",
+    "quality_grade",
     "objects_detected",
     "largest_area_px",
     "largest_bounding_box",
@@ -1710,6 +1720,12 @@ def analyze_surface(
         "blemish_status":
             blemish_result.status,
 
+        "quality_grade":
+            surface_quality_grade(
+                fraction,
+                status=blemish_result.status,
+            ),
+
         "objects_detected":
             len(objects),
 
@@ -1848,6 +1864,7 @@ def surface_card(
             f"Blemish fraction: "
             f"{fraction_text} "
             f"({row['blemish_status']}) | "
+            f"Quality grade: {row['quality_grade']} | "
             f"Foreground px: "
             f"{row['foreground_pixels']}"
         ),

@@ -19,6 +19,12 @@ from fruitripeness.ui_core import (LABELS, METHODS, METRIC_FIELDS, RESULT_FIELDS
     export_csv, export_png, infer, load_model, read_run, reserved_test_hashes, run_batch)
 
 
+class ExportFieldTests(unittest.TestCase):
+    def test_metric_exports_identify_classifier_backend(self):
+        self.assertIn("backend", METRIC_FIELDS)
+        self.assertEqual(len(METRIC_FIELDS), len(set(METRIC_FIELDS)))
+
+
 class UICoreTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
