@@ -854,7 +854,8 @@ class App:
             self.input_tab,
             text=(
                 "No ground truth is assumed for these inputs. "
-                "Scores are uncalibrated; masks are heuristics. "
+                "Supported fruits are detected and classified separately. "
+                "Scores are uncalibrated. "
                 "Original-Test content is blocked."
             ),
             wraplength=900,
@@ -960,6 +961,8 @@ class App:
             "method",
             "status",
             "predicted_stage",
+            "objects_detected",
+            "detected_fruits",
             "processing_ms",
             "prediction_ms",
             "error",
@@ -970,6 +973,8 @@ class App:
             "Method",
             "Status",
             "Prediction",
+            "Fruits",
+            "Detected types",
             "Process ms",
             "Predict ms",
             "Error",
@@ -996,6 +1001,8 @@ class App:
                 width = 330
             elif name == "method":
                 width = 265
+            elif name == "detected_fruits":
+                width = 220
             else:
                 width = 100
 
@@ -1510,8 +1517,8 @@ class App:
         ttk.Label(
             method_controls,
             text=(
-                "Prediction is for the complete frame; object boxes come "
-                "from the selected segmentation mask."
+                "Apple, banana, mango, orange and tomato instances are "
+                "detected first; ripeness is predicted separately for each fruit."
             ),
             wraplength=650,
         ).pack(
@@ -1675,6 +1682,7 @@ class App:
             "score_ripe",
             "score_overripe",
             "objects_detected",
+            "detected_fruits",
             "processing_ms",
         ]
 
@@ -1685,7 +1693,8 @@ class App:
             "Unripe",
             "Ripe",
             "Overripe",
-            "Objects",
+            "Fruits",
+            "Detected types",
             "Process ms",
         ]
 
@@ -1970,10 +1979,9 @@ class App:
             trusted=True,
         )
 
-        return lambda image: infer(
-            image,
-            bundle,
-        )
+        from .fruit_detection import analyse_fruits
+
+        return lambda image: analyse_fruits(image, bundle)
 
     def start_camera(self):
 
@@ -3076,6 +3084,7 @@ class App:
                             value,
                         )
                     ),
+                    per_fruit=True,
                 )
             )
 
@@ -3137,6 +3146,8 @@ class App:
                             "method",
                             "status",
                             "predicted_stage",
+                            "objects_detected",
+                            "detected_fruits",
                             "processing_ms",
                             "prediction_ms",
                             "error",
@@ -3148,11 +3159,11 @@ class App:
                         values[1],
                     )
 
-                    values[4:6] = [
+                    values[6:8] = [
                         f"{v:.1f}"
                         if isinstance(v, float)
                         else v
-                        for v in values[4:6]
+                        for v in values[6:8]
                     ]
 
                     self.table.insert(
@@ -3319,10 +3330,8 @@ class App:
                     self.media_summary.set(
                         f"Live frame {value['frame_index']} | "
                         f"{value['predicted_stage'].upper()} | "
-                        f"unripe {value['score_unripe']:.1%}, "
-                        f"ripe {value['score_ripe']:.1%}, "
-                        f"overripe {value['score_overripe']:.1%} | "
-                        f"{value['objects_detected']} object(s)"
+                        f"{value['objects_detected']} fruit(s): "
+                        f"{value.get('detected_fruits') or 'none'}"
                     )
                     self.status.set(
                         "Live camera is running. Capture the current "
@@ -3349,6 +3358,7 @@ class App:
                         f"{row['score_ripe']:.1%}",
                         f"{row['score_overripe']:.1%}",
                         row["objects_detected"],
+                        row.get("detected_fruits", ""),
                         f"{row['processing_ms']:.1f}",
                     ]
 
@@ -3372,7 +3382,8 @@ class App:
                     self.media_summary.set(
                         f"Processed frame {completed}/{total_text} | "
                         f"{row['predicted_stage'].upper()} | "
-                        f"{row['objects_detected']} object(s)"
+                        f"{row['objects_detected']} fruit(s): "
+                        f"{row.get('detected_fruits') or 'none'}"
                     )
 
                 elif kind == "video_completed":
@@ -4157,8 +4168,8 @@ class App:
                     protected=self.result_protected,
                     labels=LABELS,
                     notes=[
-                        "Predictions are image-level unripe, ripe or "
-                        "overripe classifications.",
+                        "Interactive predictions are per detected fruit; "
+                        "mixed means the fruits have different stages.",
                         "Class scores are uncalibrated. The visual evidence "
                         "shows the currently displayed source image.",
                     ],

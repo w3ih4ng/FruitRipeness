@@ -125,6 +125,10 @@ RESULT_FIELDS = [
     "foreground_fraction",
     "mask_status",
     "refined_review_flag",
+    "detection_ms",
+    "objects_detected",
+    "detected_fruits",
+    "object_results_json",
 ]
 
 METRIC_FIELDS = [
@@ -811,6 +815,8 @@ def run_batch(
     trusted,
     cancel,
     emit,
+    per_fruit=False,
+    detector=None,
 ):
 
     ensure_compatible(runs)
@@ -854,6 +860,10 @@ def run_batch(
                 run,
                 trusted=trusted,
             )
+
+    if per_fruit:
+        from .fruit_detection import shared_fruit_detector
+        detector = detector or shared_fruit_detector()
 
     for index, path in enumerate(paths):
 
@@ -902,6 +912,17 @@ def run_batch(
                 f"{type(exc).__name__}: {exc}"
             )
 
+        detections = None
+        detection_ms = None
+
+        if per_fruit and not error:
+            try:
+                started = time.perf_counter()
+                detections = detector.detect(image)
+                detection_ms = (time.perf_counter() - started) * 1000
+            except Exception as exc:
+                error = f"{type(exc).__name__}: {exc}"
+
         for run in runs:
 
             if cancel.is_set():
@@ -930,20 +951,34 @@ def run_batch(
 
                 try:
 
-                    prediction, result = infer(
-                        image,
-                        bundle,
-                    )
+                    if per_fruit:
+                        from .fruit_detection import analyse_fruits, per_fruit_card
+                        prediction, result = analyse_fruits(
+                            image,
+                            bundle,
+                            detector,
+                            detections=detections,
+                            detection_ms=detection_ms,
+                        )
+                    else:
+                        prediction, result = infer(
+                            image,
+                            bundle,
+                        )
 
                     row.update(
                         prediction,
                         status="ok",
                     )
 
-                    preview = prediction_card(
-                        row,
-                        result,
-                    )
+                    if per_fruit:
+                        row["method_label"] = LABELS[run.method]
+                        preview = per_fruit_card(row, result)
+                    else:
+                        preview = prediction_card(
+                            row,
+                            result,
+                        )
 
                 except Exception as exc:
 

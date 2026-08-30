@@ -1,0 +1,4 @@
+# Install requirements.txt and requirements-cnn.txt first.
+# YOLOE 26 requires Ultralytics 8.4.0 or newer.
+opencv-python==4.13.0.92
+ultralytics>=8.4.0,<9

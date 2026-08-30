@@ -38,6 +38,8 @@ PREDICTION_PDF_FIELDS = [
     ("source", "Image"),
     ("method", "Method"),
     ("predicted_stage", "Ripeness"),
+    ("objects_detected", "Fruits"),
+    ("detected_fruits", "Types"),
     ("score_unripe", "Unripe"),
     ("score_ripe", "Ripe"),
     ("score_overripe", "Overripe"),

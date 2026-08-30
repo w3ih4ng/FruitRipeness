@@ -35,7 +35,10 @@ VIDEO_RESULT_FIELDS = [
     "processing_ms",
     "feature_ms",
     "prediction_ms",
+    "detection_ms",
     "objects_detected",
+    "detected_fruits",
+    "object_results_json",
 ]
 
 
@@ -60,7 +63,23 @@ def annotate_frame(
     *,
     method_label: str,
 ) -> tuple[Image.Image, int]:
-    """Draw the frame-level prediction and segmentation-derived objects."""
+    """Draw per-fruit results, with legacy frame-level support for tests."""
+
+    if hasattr(processing_result, "annotated"):
+        canvas = processing_result.annotated.copy()
+        draw = ImageDraw.Draw(canvas)
+        font = ImageFont.load_default(
+            size=max(13, min(canvas.width, canvas.height) // 32)
+        )
+        summary = (
+            f"{method_label} | {len(processing_result.objects)} fruit(s) | "
+            f"{prediction['predicted_stage'].upper()}"
+        )
+        box = draw.textbbox((0, 0), summary, font=font)
+        height = box[3] - box[1] + 12
+        draw.rectangle((0, 0, canvas.width, height), fill=(25, 55, 42))
+        draw.text((8, 6), summary, fill="white", font=font)
+        return canvas, len(processing_result.objects)
 
     objects = detect_objects(processing_result.mask)
     canvas = draw_detections(original, objects)
@@ -156,6 +175,9 @@ def run_live_camera(
                     "frame_index": frame_index,
                     "method": method,
                     "objects_detected": objects,
+                    "detection_ms": 0.0,
+                    "detected_fruits": "",
+                    "object_results_json": "[]",
                     **prediction,
                 },
             )
@@ -252,6 +274,9 @@ def process_video(
                 "timestamp_seconds": (frame_index - 1) / fps,
                 "method": method,
                 "objects_detected": objects,
+                "detection_ms": 0.0,
+                "detected_fruits": "",
+                "object_results_json": "[]",
                 **prediction,
             }
             rows.append(row)

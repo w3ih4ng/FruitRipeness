@@ -16,5 +16,7 @@ data/*
 outputs/*
 !outputs/README.md
 models/*
+yoloe-*-seg.pt
+mobileclip*.ts
 .DS_Store
 Thumbs.db
