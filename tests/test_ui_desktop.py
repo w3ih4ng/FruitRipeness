@@ -76,6 +76,13 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(len(self.app.tabs.tabs()), 5)
         self.assertFalse(hasattr(self.app, 'models_tab'))
         self.assertFalse(hasattr(self.app, 'trust'))
+        self.assertFalse(self.app.results_expanded)
+        self.assertEqual(self.app.results_table_area.winfo_manager(), '')
+        self.app.toggle_results()
+        self.assertTrue(self.app.results_expanded)
+        self.assertEqual(self.app.results_table_area.winfo_manager(), 'pack')
+        self.app.toggle_results()
+        self.assertFalse(self.app.results_expanded)
         self.assertEqual(self.app.hybrid_variant.get(), 'hybrid')
         with patch.object(self.app, 'start') as start:
             self.app.hybrid_variant.set('hybrid_refined')

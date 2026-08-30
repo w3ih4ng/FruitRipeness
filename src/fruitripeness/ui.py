@@ -169,6 +169,8 @@ class App:
         self.rows = []
         self.cards = {}
         self.card_source = ""
+        self.preview_redraw_after = None
+        self.results_expanded = False
 
         # =========================================================
         # Validation
@@ -393,8 +395,8 @@ class App:
         header = tk.Frame(
             root,
             bg="#214737",
-            padx=22,
-            pady=16,
+            padx=18,
+            pady=10,
         )
 
         header.pack(
@@ -404,7 +406,7 @@ class App:
         tk.Label(
             header,
             text="FRUIT RIPENESS",
-            font=("Segoe UI", 21, "bold"),
+            font=("Segoe UI", 19, "bold"),
             bg="#214737",
             fg="white",
         ).pack(
@@ -505,12 +507,12 @@ class App:
             fill="both",
             expand=True,
             padx=12,
-            pady=10,
+            pady=6,
         )
 
         self.input_tab = ttk.Frame(
             self.tabs,
-            padding=12,
+            padding=8,
         )
 
         self.eval_tab = ttk.Frame(
@@ -863,6 +865,8 @@ class App:
             orient="vertical",
         )
 
+        self.input_panes = panes
+
         panes.pack(
             fill="both",
             expand=True,
@@ -874,7 +878,12 @@ class App:
 
         panes.add(
             preview_frame,
-            weight=3,
+            weight=8,
+        )
+
+        self.preview_canvas.bind(
+            "<Configure>",
+            self.schedule_preview_redraw,
         )
 
         table_frame = ttk.Frame(
@@ -883,8 +892,10 @@ class App:
 
         panes.add(
             table_frame,
-            weight=2,
+            weight=0,
         )
+
+        self.results_table_frame = table_frame
 
         bar = ttk.Frame(
             table_frame
@@ -918,17 +929,23 @@ class App:
             self.save_prediction_pdf,
         )
 
-        ttk.Label(
+        self.button(
             bar,
-            text="Select a result row to inspect its source or error.",
-        ).pack(
-            side="left",
-            padx=6,
+            "Expand preview",
+            self.open_preview_window,
+        )
+
+        self.results_toggle_button = self.button(
+            bar,
+            "Show result details",
+            self.toggle_results,
         )
 
         table_area = ttk.Frame(
             table_frame
         )
+
+        self.results_table_area = table_area
 
         table_area.pack(
             fill="both",
@@ -1039,6 +1056,10 @@ class App:
             "<Double-1>",
             lambda event: self.preview_selected(),
         )
+
+        # Keep detailed rows available without allowing them to consume most
+        # of the image workspace on startup.
+        self.results_table_area.pack_forget()
 
     # =============================================================
     # VALIDATION TAB
@@ -3482,6 +3503,8 @@ class App:
         canvas,
         image,
         width,
+        *,
+        center=False,
     ):
 
         canvas.delete(
@@ -3518,9 +3541,31 @@ class App:
 
         canvas.photo = photo
 
+        canvas_width = max(
+            1,
+            canvas.winfo_width(),
+        )
+
+        canvas_height = max(
+            1,
+            canvas.winfo_height(),
+        )
+
+        x = (
+            max(0, (canvas_width - display.width) // 2)
+            if center
+            else 0
+        )
+
+        y = (
+            max(0, (canvas_height - display.height) // 2)
+            if center
+            else 0
+        )
+
         canvas.create_image(
-            0,
-            0,
+            x,
+            y,
             anchor="nw",
             image=photo,
         )
@@ -3529,12 +3574,171 @@ class App:
             scrollregion=(
                 0,
                 0,
-                display.width,
-                display.height,
+                max(canvas_width, x + display.width),
+                max(canvas_height, y + display.height),
             )
         )
 
+        canvas.xview_moveto(0)
+        canvas.yview_moveto(0)
+
+    def preview_width(
+        self,
+        canvas,
+        image,
+        *,
+        fit_height,
+    ):
+
+        available_width = max(
+            320,
+            canvas.winfo_width() - 20,
+        )
+
+        width = min(
+            image.width,
+            available_width,
+        )
+
+        if fit_height:
+            available_height = max(
+                220,
+                canvas.winfo_height() - 20,
+            )
+
+            width = min(
+                width,
+                image.width * available_height / image.height,
+            )
+
+        return max(
+            1,
+            round(width),
+        )
+
+    def schedule_preview_redraw(
+        self,
+        event=None,
+    ):
+
+        if self.preview_redraw_after is not None:
+            try:
+                self.root.after_cancel(
+                    self.preview_redraw_after
+                )
+            except tk.TclError:
+                pass
+
+        self.preview_redraw_after = self.root.after(
+            80,
+            self.draw_preview,
+        )
+
+    def toggle_results(self):
+
+        self.results_expanded = not self.results_expanded
+
+        if self.results_expanded:
+            self.results_table_area.pack(
+                fill="both",
+                expand=True,
+            )
+
+            self.input_panes.pane(
+                self.results_table_frame,
+                weight=2,
+            )
+
+            self.results_toggle_button.configure(
+                text="Hide result details"
+            )
+        else:
+            self.results_table_area.pack_forget()
+
+            self.input_panes.pane(
+                self.results_table_frame,
+                weight=0,
+            )
+
+            self.results_toggle_button.configure(
+                text="Show result details"
+            )
+
+        self.root.after_idle(
+            self.draw_preview
+        )
+
+    def open_preview_window(self):
+
+        try:
+            if not self.cards:
+                raise ValueError(
+                    "No preview is available to expand."
+                )
+
+            sheet = comparison_sheet(
+                self.card_source,
+                list(self.cards.values()),
+            )
+
+            window = tk.Toplevel(
+                self.root
+            )
+
+            window.title(
+                "Fruit Ripeness | Expanded preview"
+            )
+
+            width = min(
+                1500,
+                max(900, self.root.winfo_screenwidth() - 80),
+            )
+
+            height = min(
+                950,
+                max(650, self.root.winfo_screenheight() - 100),
+            )
+
+            window.geometry(
+                f"{width}x{height}"
+            )
+
+            frame, canvas = self.scroll_image(
+                window
+            )
+
+            frame.pack(
+                fill="both",
+                expand=True,
+            )
+
+            def redraw(event=None):
+                self.display(
+                    canvas,
+                    sheet,
+                    self.preview_width(
+                        canvas,
+                        sheet,
+                        fit_height=len(self.cards) == 1,
+                    ),
+                    center=len(self.cards) == 1,
+                )
+
+            canvas.bind(
+                "<Configure>",
+                redraw,
+            )
+
+            window.after_idle(
+                redraw
+            )
+
+        except Exception as exc:
+            self.error(exc)
+
     def draw_preview(self):
+
+        self.preview_redraw_after = None
 
         if self.cards:
 
@@ -3548,14 +3752,12 @@ class App:
             self.display(
                 self.preview_canvas,
                 sheet,
-                min(
-                    1180,
-                    max(
-                        900,
-                        self.preview_canvas.winfo_width()
-                        - 20,
-                    ),
+                self.preview_width(
+                    self.preview_canvas,
+                    sheet,
+                    fit_height=len(self.cards) == 1,
                 ),
+                center=len(self.cards) == 1,
             )
 
         else:

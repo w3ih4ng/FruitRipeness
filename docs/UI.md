@@ -40,8 +40,13 @@ desktop integration tests require a graphical Tk display.
    **Hybrid A - HSV + GrabCut union** is the original version;
    **Hybrid B - HSV-seeded GrabCut** is the refined version.
    **Compare hybrid versions** runs both. Raw input is a separate reference option.
-4. Select a result row and choose **Preview selected image** to inspect it.
-5. Export predictions as CSV, the displayed comparison as PNG, or a combined PDF
+4. The preview automatically fits the available width. A single-method result also
+   fits the available height, while multi-method comparisons scroll vertically.
+   Choose **Expand preview** for a separate large inspection window.
+5. Detailed result rows start collapsed to prioritise the images. Choose
+   **Show result details** when a source, timing or error row must be inspected,
+   and use **Preview selected image** to reconstruct the selected source.
+6. Export predictions as CSV, the displayed comparison as PNG, or a combined PDF
    report containing visual evidence and the recorded prediction table.
 
 Cards show original/processed images, masks, ripeness predictions, uncalibrated
