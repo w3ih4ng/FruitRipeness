@@ -83,6 +83,13 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(self.app.results_table_area.winfo_manager(), 'pack')
         self.app.toggle_results()
         self.assertFalse(self.app.results_expanded)
+        self.assertFalse(self.app.video_results_expanded)
+        self.assertEqual(self.app.video_table_area.winfo_manager(), '')
+        self.app.toggle_video_results()
+        self.assertTrue(self.app.video_results_expanded)
+        self.assertEqual(self.app.video_table_area.winfo_manager(), 'pack')
+        self.app.toggle_video_results()
+        self.assertFalse(self.app.video_results_expanded)
         self.assertEqual(self.app.hybrid_variant.get(), 'hybrid')
         with patch.object(self.app, 'start') as start:
             self.app.hybrid_variant.set('hybrid_refined')

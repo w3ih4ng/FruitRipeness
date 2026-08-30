@@ -128,6 +128,10 @@ and detected-object count. **Capture snapshot for comparison** saves the origina
 unannotated frame, selects it on **Images & folders**, and stops the camera. After
 the camera finishes closing, use **Compare all six** as for any other image.
 
+Camera and uploaded-video frames automatically fit both the available preview
+width and height. Uploaded-video frame records start collapsed; choose
+**Show frame details** only when the per-frame table is needed.
+
 For uploaded video, choose an MP4, AVI, MOV or MKV source, then select
 **Process and export annotated video**. Choose a new MP4 or AVI filename outside
 the source and saved-model folders. Every decoded frame is processed, so slower

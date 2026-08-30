@@ -209,6 +209,9 @@ class App:
         self.video_rows = []
         self.video_preview = None
         self.video_protected = []
+        self.media_display_image = None
+        self.media_redraw_after = None
+        self.video_results_expanded = False
         self.task_kind = ""
 
         # =========================================================
@@ -1592,6 +1595,12 @@ class App:
             self.save_video_csv,
         )
 
+        self.video_details_button = self.button(
+            video_controls,
+            "Show frame details",
+            self.toggle_video_results,
+        )
+
         ttk.Label(
             self.media_tab,
             textvariable=self.video_note,
@@ -1615,6 +1624,8 @@ class App:
             orient="vertical",
         )
 
+        self.media_panes = panes
+
         panes.pack(
             fill="both",
             expand=True,
@@ -1626,7 +1637,12 @@ class App:
 
         panes.add(
             preview_frame,
-            weight=3,
+            weight=8,
+        )
+
+        self.media_canvas.bind(
+            "<Configure>",
+            self.schedule_media_redraw,
         )
 
         table_frame = ttk.Frame(
@@ -1635,7 +1651,20 @@ class App:
 
         panes.add(
             table_frame,
-            weight=2,
+            weight=0,
+        )
+
+        self.video_table_frame = table_frame
+
+        table_area = ttk.Frame(
+            table_frame
+        )
+
+        self.video_table_area = table_area
+
+        table_area.pack(
+            fill="both",
+            expand=True,
         )
 
         columns = [
@@ -1661,7 +1690,7 @@ class App:
         ]
 
         self.video_table = ttk.Treeview(
-            table_frame,
+            table_area,
             columns=columns,
             show="headings",
             height=5,
@@ -1673,13 +1702,13 @@ class App:
             self.video_table.column(name, width=120, stretch=False)
 
         ybar = ttk.Scrollbar(
-            table_frame,
+            table_area,
             orient="vertical",
             command=self.video_table.yview,
         )
 
         xbar = ttk.Scrollbar(
-            table_frame,
+            table_area,
             orient="horizontal",
             command=self.video_table.xview,
         )
@@ -1689,11 +1718,13 @@ class App:
             xscrollcommand=xbar.set,
         )
 
-        table_frame.columnconfigure(0, weight=1)
-        table_frame.rowconfigure(0, weight=1)
+        table_area.columnconfigure(0, weight=1)
+        table_area.rowconfigure(0, weight=1)
         self.video_table.grid(row=0, column=0, sticky="nsew")
         ybar.grid(row=0, column=1, sticky="ns")
         xbar.grid(row=1, column=0, sticky="ew")
+
+        self.video_table_area.pack_forget()
 
         self.sync_media_controls()
 
@@ -1960,6 +1991,7 @@ class App:
             run = self.selected_runs([method])[0]
             self.camera_latest = None
             self.camera_latest_row = None
+            self.media_display_image = None
             self.camera_running = True
             self.media_summary.set(
                 "Opening camera and loading the selected model..."
@@ -2058,6 +2090,7 @@ class App:
             self.video_rows = []
             self.video_output = None
             self.video_preview = None
+            self.media_display_image = None
             self.video_table.delete(
                 *self.video_table.get_children()
             )
@@ -2103,6 +2136,7 @@ class App:
             self.video_rows = []
             self.video_output = None
             self.video_preview = None
+            self.media_display_image = None
             self.video_protected = [
                 self.video_source.parent,
                 run.path,
@@ -3279,17 +3313,8 @@ class App:
 
                     self.camera_latest = value["original"]
                     self.camera_latest_row = value
-
-                    width = min(
-                        1180,
-                        max(700, self.media_canvas.winfo_width() - 20),
-                    )
-
-                    self.display(
-                        self.media_canvas,
-                        value["annotated"],
-                        width,
-                    )
+                    self.media_display_image = value["annotated"]
+                    self.draw_media_preview()
 
                     self.media_summary.set(
                         f"Live frame {value['frame_index']} | "
@@ -3314,6 +3339,7 @@ class App:
                     row, annotated, total = value
                     self.video_rows.append(row)
                     self.video_preview = annotated
+                    self.media_display_image = annotated
 
                     values = [
                         row["frame_index"],
@@ -3334,11 +3360,7 @@ class App:
                     )
                     self.video_table.see(str(len(self.video_rows) - 1))
 
-                    width = min(
-                        1180,
-                        max(700, self.media_canvas.winfo_width() - 20),
-                    )
-                    self.display(self.media_canvas, annotated, width)
+                    self.draw_media_preview()
 
                     completed = row["frame_index"]
                     maximum = total if total > 0 else completed
@@ -3735,6 +3757,76 @@ class App:
 
         except Exception as exc:
             self.error(exc)
+
+    def schedule_media_redraw(
+        self,
+        event=None,
+    ):
+
+        if self.media_redraw_after is not None:
+            try:
+                self.root.after_cancel(
+                    self.media_redraw_after
+                )
+            except tk.TclError:
+                pass
+
+        self.media_redraw_after = self.root.after(
+            80,
+            self.draw_media_preview,
+        )
+
+    def draw_media_preview(self):
+
+        self.media_redraw_after = None
+
+        if self.media_display_image is None:
+            return
+
+        self.display(
+            self.media_canvas,
+            self.media_display_image,
+            self.preview_width(
+                self.media_canvas,
+                self.media_display_image,
+                fit_height=True,
+            ),
+            center=True,
+        )
+
+    def toggle_video_results(self):
+
+        self.video_results_expanded = not self.video_results_expanded
+
+        if self.video_results_expanded:
+            self.video_table_area.pack(
+                fill="both",
+                expand=True,
+            )
+
+            self.media_panes.pane(
+                self.video_table_frame,
+                weight=2,
+            )
+
+            self.video_details_button.configure(
+                text="Hide frame details"
+            )
+        else:
+            self.video_table_area.pack_forget()
+
+            self.media_panes.pane(
+                self.video_table_frame,
+                weight=0,
+            )
+
+            self.video_details_button.configure(
+                text="Show frame details"
+            )
+
+        self.root.after_idle(
+            self.draw_media_preview
+        )
 
     def draw_preview(self):
 
