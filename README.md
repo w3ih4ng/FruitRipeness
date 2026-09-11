@@ -4,11 +4,14 @@ A local desktop application comparing five image-processing methods and two
 hybrid variants across multiple fruits. The final classifier is **one shared
 MobileNetV2 CNN**: a frozen pretrained backbone with a trained ripeness head.
 The earlier **Random Forest models** remain available as experimental benchmarks.
-Predictions are image-level **unripe, ripe or overripe**, not fruit-species detection.
+Saved validation and final-Test measurements remain image-level. Interactive images,
+camera frames and videos now use YOLOE instance segmentation to detect **apple,
+banana, mango, orange and tomato**, then classify every detected fruit crop as
+**unripe, ripe or overripe** with the selected method and shared CNN.
 
 The desktop application also provides classical preprocessing and surface analysis:
-blemish percentage, a transparent heuristic quality grade, contour-based object
-detection and pixel-based size measurements. Prediction, validation, final-Test and
+blemish percentage, a transparent heuristic quality grade, contour-based surface
+measurements and pixel-based size measurements. Prediction, validation, final-Test and
 surface-analysis views can be exported directly to PDF in addition to PNG/CSV.
 The **Camera & video** tab adds live frame prediction, snapshot capture for the
 existing six-method comparison, and frame-by-frame annotated MP4/AVI export with
@@ -68,7 +71,7 @@ Hybrid A/B identify designs, not a ranking. Keep both in the report.
 | `docs/` | Method explanations, experiment protocols and dataset limitations |
 | `data/raw/` | Original dataset, unchanged |
 | `outputs/` | Complete trained runs, validation results and final Test reports |
-| `requirements.txt`, `requirements-cnn.txt`, `pyproject.toml` | Pinned installation requirements |
+| `requirements.txt`, `requirements-cnn.txt`, `requirements-detector.txt`, `pyproject.toml` | Installation requirements |
 
 The application automatically selects the newest compatible saved run. Models
 live inside complete output runs, not a separate deployment folder.
@@ -91,9 +94,13 @@ Python 3.12, then run:
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe -m pip install -r requirements-cnn.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements-detector.txt
+.\.venv\Scripts\python.exe -m fruitripeness.fruit_detection --prepare
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
+The detector preparation command needs internet access on first use and downloads
+YOLOE plus its text encoder. Each teammate should run it once from the project root.
 Copy your backed-up original dataset and complete output runs separately. Select
 `.venv\Scripts\python.exe` as the VS Code interpreter. Keep pinned dependencies;
 saved models check compatible versions. No retraining is needed to use them.

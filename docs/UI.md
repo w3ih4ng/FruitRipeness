@@ -119,12 +119,19 @@ dataset contains no consistent reference object of known physical size.
 
 The **Camera & video** tab uses the classifier selected in the top bar and one
 selected processing method. It does not train, alter the source media or read
-labels. Predictions apply to the complete frame; the displayed object boxes are
-contours from the segmentation mask, not separate per-fruit classifications.
+labels. A pretrained YOLOE instance-segmentation model first locates apples,
+bananas, mangoes, oranges and tomatoes. The selected processing method and saved
+ripeness CNN are then applied independently to every detected fruit crop. A hand,
+person or background is not treated as a fruit. If no supported fruit is detected,
+the frame is reported as `none`; there is no hidden whole-frame fallback.
+This pretrained detector is an additional interactive-system feature. It is not
+one of the five image-processing methods and does not change their saved
+validation or final-Test measurements. Detector confidence describes localisation,
+not ripeness probability.
 
 For a webcam, choose a non-negative camera index (normally `0`) and select
-**Start live camera**. The preview updates with the frame-level ripeness scores
-and detected-object count. **Capture snapshot for comparison** saves the original
+**Start live camera**. The preview updates with a labelled box and ripeness stage
+for every detected fruit. **Capture snapshot for comparison** saves the original
 unannotated frame, selects it on **Images & folders**, and stops the camera. After
 the camera finishes closing, use **Compare all six** as for any other image.
 
@@ -140,8 +147,9 @@ duration. The application writes to a temporary file first and only finalises th
 annotated video after successful completion. Cancelling discards that incomplete
 video while retaining completed frame rows for optional CSV export.
 
-The exported CSV records frame number, timestamp, method, prediction, three
-uncalibrated scores, timing and detected-object count. Video containers/codecs
+The exported CSV records frame number, timestamp, method, aggregate display stage,
+detected fruit types, timing and a JSON field containing every fruit's bounding
+box, detector confidence, ripeness stage and three uncalibrated scores. Video containers/codecs
 depend on the local OpenCV build; use MP4 first and AVI if a computer cannot create
 MP4 output. Camera permission and a camera not already occupied by another program
 are required for live mode.
